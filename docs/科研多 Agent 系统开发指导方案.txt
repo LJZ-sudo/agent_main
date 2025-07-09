@@ -1,0 +1,370 @@
+明白了，我将为你编写一份详细的Cursor开发指导方案，涵盖实验设计Agent、控制调度模块与评估Agent，基于Python语言、DeepSeek-R1 API和中心化黑板系统。
+
+该方案将包括：
+
+* 每个模块的功能定位、输入输出格式、关键Prompt设计
+* 与黑板系统的交互数据结构与调用流程
+* 模块与函数划分建议、Cursor项目中.py文件组织
+* 实验设计的科研场景落地、评估Agent的结构化打分维度
+
+完成后我将通知你查阅。
+
+
+# 科研多 Agent 系统开发指导方案
+
+本方案针对一个科研多智能体（Multi-Agent）系统，包含**实验设计 Agent**、**控制调度模块（黑板系统）**和**评估 Agent**三个核心模块，基于 Python 与 DeepSeek-R1 LLM API 实现。系统采用中心化的**黑板模式**架构，让各 Agent 通过共享的“黑板”交换信息和协同工作。下面将详细说明各模块的功能目标、数据接口设计、黑板交互机制、高质量提示词模板以及代码组织建议。
+
+## 系统概述与架构
+
+科研多 Agent 系统旨在让多个专职 Agent 分工合作完成科研实验方案的设计和评估。整体架构采用黑板设计模式：黑板作为中心控制和通信枢纽，协调实验设计和评估 Agent 的调度与数据共享。各 Agent 不直接互相调用，而是通过黑板发布和订阅结构化事件来沟通，这种共享“黑板”机制让 Agent 可以异步协同完成复杂任务。黑板上的事件使用标准化的数据格式（如 JSON），作为 Agent 交流的通用语言，使它们能够可靠地理解指令、共享上下文并协调任务。控制调度模块（黑板系统）负责监听事件、调度合适的 Agent 处理，并维护任务流程的状态。下面分别介绍每个模块的详细方案。
+
+## 实验设计 Agent
+
+**功能目标：** 实验设计 Agent 是科研领域的“专家助手”，负责根据给定的研究目标和背景信息，设计出**可执行**的实验方案。它需要输出清晰完整的实验计划，包括实验目的、所需样品和设备、实验条件参数，以及分步的实验流程。通过调用 DeepSeek-R1 大模型，此 Agent 将自然语言描述的科研需求转化为结构化的实验方案。
+
+**输入输出设计：** 实验设计 Agent 接收一个描述实验背景和目标的输入，并产生结构化的实验方案作为输出。推荐使用 JSON Schema 定义接口字段，确保输入输出格式清晰严格。具体设计如下：
+
+* **输入字段**（JSON Schema）：实验背景、实验目标，以及可选的约束条件等。示例如下：
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "background": { "type": "string" },   // 实验背景描述
+      "goal": { "type": "string" },         // 实验具体目标或假设
+      "constraints": { "type": "string" }   // 可选，额外约束（如设备/时间限制等）
+    },
+    "required": ["background", "goal"]
+  }
+  ```
+
+* **输出字段**（JSON Schema）：实验设计 Agent 输出完整实验方案，包含以下主要部分：实验目标说明、样品材料、所需设备、实验条件、变量设置以及步骤流程。示例如下：
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "objective": { "type": "string" },    // 实验目的/目标
+      "samples": {                          // 所需样品或材料列表
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "equipment": {                        // 所需设备列表 
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "conditions": {                       // 实验条件（环境条件，如温度、压力等）
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "variables": {                        // 实验变量设置
+        "type": "object",
+        "properties": {
+          "independent": {                  // 自变量列表
+            "type": "array", "items": { "type": "string" }
+          },
+          "dependent": {                    // 因变量列表
+            "type": "array", "items": { "type": "string" }
+          },
+          "controlled": {                   // 控制变量列表（保持恒定的条件）
+            "type": "array", "items": { "type": "string" }
+          }
+        }
+      },
+      "steps": {                            // 实验步骤列表
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "required": ["objective", "samples", "equipment", "conditions", "variables", "steps"]
+  }
+  ```
+
+  *说明：* 上述结构确保实验方案输出涵盖**样品**、**设备**、**条件**、**变量**、**步骤**等要素。比如，`samples`列出实验用到的材料或试剂，`equipment`列出所需仪器，`conditions`描述环境或初始条件（如温度、pH 等），`variables`细分自变量、因变量和控制变量，`steps`按顺序给出操作步骤。`objective`则重申实验的目标或假设，以确保方案围绕既定目标。输出为 JSON 格式便于后续评估 Agent 程序解析和利用。
+
+**黑板交互：** 实验设计 Agent 与黑板系统通过事件进行通信。它**订阅**黑板上的“实验设计请求”事件，当黑板发布此类事件时，实验设计 Agent 被触发执行设计任务。典型事件约定如下：
+
+* **订阅事件类型：** `DesignRequest`（实验设计请求）。当有新的实验需要设计时，黑板发布该事件，事件携带上文定义的输入字段数据（背景、目标等）。
+* **处理逻辑：** 实验设计 Agent 接收到 `DesignRequest` 事件后，从事件数据中提取背景与目标信息，调用 DeepSeek-R1 模型生成实验方案。生成完毕后，Agent 将结果提交回黑板。
+* **发布事件类型：** `ExperimentPlan`（实验方案产出）。实验设计 Agent 在方案生成后，向黑板**写入**一个事件，包含输出的实验方案 JSON 数据，并标记来源（source）为设计 Agent。本事件表示实验设计阶段完成，提供了供后续评估的计划内容。
+
+事件数据格式采用统一的 JSON，对每个事件规定类型和数据字段。例如，一个事件可以表示为：
+
+```json
+{
+  "event_type": "DesignRequest",
+  "data": {
+    "background": "...",
+    "goal": "...",
+    "constraints": "..."
+  },
+  "source": "user",           // 来源（比如用户或上一级模块）
+  "timestamp": "2025-06-23T22:18:25Z"
+}
+```
+
+黑板收到 `DesignRequest` 后，将按照订阅关系通知实验设计 Agent 处理。Agent处理完毕，发布`ExperimentPlan`事件，例如：
+
+```json
+{
+  "event_type": "ExperimentPlan",
+  "data": { ...实验方案JSON... },
+  "source": "design_agent",
+  "timestamp": "2025-06-23T22:18:30Z"
+}
+```
+
+其他 Agent（如评估 Agent）可订阅此事件以获取实验方案。通过这样标准化的事件消息格式（如上述 JSON 结构），黑板可确保各 Agent 清晰理解数据含义并进行后续操作。
+
+**Prompt 模板设计（中文）：** 为了引导 DeepSeek-R1 生成符合预期的实验方案输出，需要精心设计提示词。实验设计 Agent 的提示应包括实验背景、目标，并明确要求模型产出结构化的实验方案内容。下面给出一个高质量的提示模板示例：
+
+```markdown
+系统角色：你是一位资深的科研实验设计助手，擅长根据研究目标制定材料/化学实验方案。
+
+用户输入：
+实验背景：{背景描述}  
+实验目标：{具体要达成的目标或验证的假设}  
+
+请根据以上背景和目标，设计一个完整的实验方案。方案需涵盖：
+- **实验目的**（对应目标的详细描述）  
+- **所需样品**（实验使用的材料、试剂等）  
+- **所需设备**（实验所需的仪器设备）  
+- **实验条件**（需要控制或保持的条件，如温度、时间、环境等）  
+- **变量设置**（自变量、因变量及控制变量分别是什么）  
+- **具体步骤**（实验的详细操作步骤，按顺序列出）
+
+输出要求：请使用JSON格式输出实验方案，包含字段`"objective"`, `"samples"`, `"equipment"`, `"conditions"`, `"variables"`, `"steps"`，并确保结构完整清晰。
+
+> **重要提示**：输出必须是**有效的 JSON 字符串**，不包含多余说明或 Markdown 格式，只包含纯JSON对象，并严格符合以下 JSON Schema 定义：<*(在此插入上述输出JSON Schema定义)*>。
+```
+
+上述提示模板首先通过系统角色设定模型的身份（科研实验设计助手），确保 DeepSeek-R1 明确自己在科研领域提供帮助。接着提供用户输入的实验背景和目标。然后以要点列表形式列出方案应包含的内容（目的、样品、设备、条件、变量、步骤），确保模型覆盖所有关键部分。最后强调以 JSON 格式输出，并附加“重要提示”要求模型严格按照给定的 JSON Schema 输出结果。我们可以利用 DeepSeek-R1 API 的 JSON输出功能，在调用时设置参数 `response_format={"type":"json_object"}`，并在提示中明确要求模型遵循给定模式。这种做法能显著提升模型输出 JSON 的可靠性和一致性。实际提示中，`{背景描述}`和`{具体目标}`将由黑板从输入事件数据中填充。
+
+**代码组织建议：** 实验设计 Agent 可以封装为独立的模块（如文件`experiment_design_agent.py`），实现一个 Agent 类负责接收请求并调用 LLM 接口生成方案。代码组织要清晰，便于在 Cursor 项目中直接开发和维护：
+
+* 建议定义一个类，如 `ExperimentDesignAgent`，包含：
+
+  * **属性：** 如 `name="design_agent"`（Agent名称）、DeepSeek-R1 模型客户端或API接口句柄等。
+  * **方法：** `generate_plan(input_data)` 用于处理实验设计请求。该方法读取输入的背景和目标，按照上述 Prompt 模板拼接提示，并通过 DeepSeek-R1 API 调用获得模型输出。然后将输出字符串解析为 JSON（如果模型未直接给出JSON对象，需要解析校验），返回实验方案数据结构（字典或自定义对象）。
+  * **方法：** `handle_event(event)` 实现对黑板事件的响应逻辑。当收到 `DesignRequest` 时，提取事件中的`data`字段，调用`generate_plan`生成方案，然后返回结果或调用黑板接口发布事件。根据实现方式，可以选择让 `handle_event` 自行将结果通过黑板发布，或将结果返回给调度器处理。
+
+* **提示模板复用：** 可以将提示字符串定义为类的常量或模板，使用 Python 字符串格式化或模板引擎将输入数据代入。其中 JSON Schema 可以预先存储为字符串常量插入提示。利用 f-string 或 `.format()` 将背景和目标填充到 Prompt 模板占位符。
+
+* **DeepSeek-R1 调用：** 可通过 DeepSeek 提供的 Python SDK 或 OpenAI 接口兼容调用（DeepSeek API 与 OpenAI API 接口兼容）。初始化 DeepSeek-R1 模型客户端，例如：
+
+  ```python
+  from deepseek import DeepSeekClient
+  client = DeepSeekClient(api_key=..., model="deepseek-reasoner")
+  ```
+
+  然后在 `generate_plan` 中调用 `client.chat_completion(messages=..., response_format={"type": "json_object"})` 等得到模型响应。**注意：** 要实现自动重试机制，以防模型有时返回空内容。生成的 JSON 字符串可用内置的 `json`库解析并验证。
+
+* **文件划分：** 除了 Agent 类本身，可能定义一个 `schemas.py` 存放各模块的 JSON Schema 定义，方便在 Prompt 和结果校验中引用。测试时，可编写单元测试对`generate_plan`输入示例进行调用，确保输出符合 schema。
+
+通过上述设计，实验设计 Agent 将成为一个高内聚、易复用的组件。其职责单一（生成实验方案），所有 LLM 交互通过 DeepSeek-R1 API 完成，满足系统对科研实验方案设计的需求。
+
+## 控制调度模块（黑板系统）
+
+**功能目标：** 控制调度模块承担整个多 Agent 系统的大脑功能，包括事件管理、中枢调度和任务状态跟踪。它实现一个**中心化黑板机制**，充当共享数据总线和调度控制器。具体目标包括：
+
+* **事件监听与发布：** 黑板维护一个全局事件表/队列，任何 Agent 或用户请求都以事件形式写入黑板。黑板持续监听新的事件出现。
+* **Agent 调度：** 根据事件类型和预先注册的订阅关系，黑板确定由哪个 Agent 来处理特定事件。当监听到某事件时，调用相应的 Agent 执行任务（可能是同步函数调用或异步消息传递）。
+* **任务流状态管理：** 黑板跟踪任务的进展和状态。例如，一个完整任务可能包括“设计实验方案”->“评估方案”两个阶段，黑板需要知道当前处于哪个阶段、哪些阶段已完成、是否存在待处理事件等。黑板通过标记事件状态或任务ID来管理任务流，确保按正确顺序推进，避免遗漏或重复处理。
+* **数据共享：** 黑板作为共享存储，保存各阶段产生的中间结果（如实验方案、评估报告），供其他 Agent 查阅。它类似一个日志或知识库，使整个系统有统一的事实来源。
+* **错误处理与扩展：** 黑板还可以负责容错（如某Agent失败时重试或改派）以及在扩展更多Agent时的统一管理。
+
+**黑板数据结构与接口：** 黑板系统可以用一个类（如`Blackboard`）封装，其内部维护数据结构如事件队列和订阅注册表，并提供方法接口：
+
+* `Blackboard.subscribe(event_type, agent)`: **订阅接口**。用于注册某个Agent对指定事件类型的兴趣。可采用内部一个字典`subscriptions`，键为事件类型，值为订阅该类型的Agent列表（或单个Agent，如果一类事件固定由一个Agent处理）。
+* `Blackboard.post_event(event)`: **发布事件**。将一个事件写入黑板。事件可用前述JSON格式字典或自定义 Event 类实例表示。该方法将新事件加入队列或直接处理（视实现决定）。
+* `Blackboard.run()` / `Blackboard.process_events()`: **事件调度循环**。一个持续运行的方法，不断从事件队列中取出未处理事件，根据其`event_type`查找订阅的Agent，并调用相应Agent处理。可以设计为同步顺序处理，也可以并行调度（需注意线程/异步安全）。在处理事件时，可以捕获Agent执行结果，生成后续事件写回黑板。
+* `Blackboard.update_state(task_id, status)`: **状态管理接口**（可选）。维护任务状态，例如使用任务ID（可以从初始请求生成）映射到当前状态（如 “design\_done”, “evaluating”, “completed” 等）。当某事件完成处理时，标记相应状态，用于判断整个任务流是否完成。
+
+**事件订阅与调度逻辑：** 根据本系统需求，我们预先在黑板中注册如下调度规则：
+
+* `DesignRequest` **事件 ->** 由 **实验设计 Agent** 处理。
+* `ExperimentPlan` **事件 ->** 由 **评估 Agent** 处理。
+
+在系统初始化时调用：
+
+```python
+blackboard.subscribe("DesignRequest", design_agent)
+blackboard.subscribe("ExperimentPlan", evaluation_agent)
+```
+
+这样黑板知晓收到这两类事件时要调哪个 Agent。
+
+**事件处理机制示意：** 以下列出一次完整任务从请求到完成的事件流，演示黑板的调度过程：
+
+1. **用户提出实验设计请求：** 用户（或上层接口）调用`blackboard.post_event()`发布`DesignRequest`事件，包含实验`background`和`goal`等数据。黑板将该事件记录在事件列表，并触发调度。
+2. **黑板调度实验设计 Agent：** 黑板检测到新事件`DesignRequest`，查阅订阅表知需由`ExperimentDesignAgent`处理。黑板调用实验设计 Agent，例如执行`design_agent.handle_event(data)`。调用时黑板可更新任务状态为“design\_in\_progress”。
+3. **实验设计 Agent 生成方案：** 设计 Agent 运行`generate_plan`（内部通过DeepSeek-R1 API），得到实验方案结果`plan_data`（JSON结构）。设计 Agent 通过黑板接口发布`ExperimentPlan`事件（或将结果返回由黑板代为发布）。例如：
+
+   ```python
+   plan_data = design_agent.generate_plan(event.data)
+   blackboard.post_event({"event_type": "ExperimentPlan", "data": plan_data, "source": "design_agent"})
+   ```
+
+   黑板接收到`ExperimentPlan`事件对象后，添加到事件队列，并将任务状态标记为“design\_done”。
+4. **黑板调度评估 Agent：** 黑板发现新的`ExperimentPlan`事件，按照订阅规则调用`EvaluationAgent`处理，传入计划数据。同样更新状态为“evaluating”。
+5. **评估 Agent 评估方案：** 评估 Agent 对收到的实验方案进行分析打分，生成评估结果`evaluation_data`。随后评估 Agent 发布`EvaluationReport`事件到黑板（或返回结果由黑板发布）。该事件包含结构化的评分和报告，来源标记为评估 Agent。
+6. **任务完成：** 黑板接收`EvaluationReport`事件后，将任务状态置为“completed”。此时整个流程结束，黑板可将最终结果返回给用户，或触发后续动作（如记录归档）。如果有需要，黑板还能通知其他组件任务完成事件。
+
+上述过程中，黑板相当于**控制器/调度器**，它确保事件按正确顺序流转，各 Agent 间通过黑板的事件中介进行协作，避免了直接耦合。所有事件都记录在黑板的共享空间中，构成完整的交互日志，使每个 Agent 对整体上下文有迹可循。这种事件驱动的协调方式具有良好的扩展性和可靠性——新 Agent 可以通过订阅新事件类型接入系统，而不会影响既有组件；所有Agent处理过的事件留存在日志中，可用于回溯分析和评估。
+
+**代码组织建议：** 黑板系统的实现可放在单独模块（如`blackboard.py`），包括黑板类和事件类定义：
+
+* 定义 `Event` 数据结构（类或命名元组/dataclass）：包含属性`event_type`, `data`, `source`, `timestamp`等，用于规范事件内容。也可直接使用Python字典表示事件，在文档和代码中清晰约定其键名含义。
+
+* 定义 `Blackboard` 类：
+
+  * **属性：** `subscriptions`（字典，键为事件类型，值为回调函数或Agent对象）、`event_queue`（列表或队列结构，存放待处理事件）、`state`（字典，用于任务状态，如任务ID映射状态）。
+  * **方法：**
+
+    * `subscribe(event_type, handler)`: 注册订阅。`handler`可以是Agent对象本身（需Agent实现统一的接口方法，如`handle_event`)，或者是处理函数的引用。订阅时，将handler存入`subscriptions[event_type]`列表（支持多个Agent订阅同一事件类型的扩展场景）。
+    * `post_event(event)`: 将事件加入`event_queue`。也可选择在此方法内立即处理某些同步事件，但一般为了解耦，采用队列+循环机制统一处理。
+    * `process_next_event()`: 从队列取出一个事件进行处理。找到该事件类型对应的handlers列表，依次调用每个handler处理（通常本系统一个事件对应一个Agent）。考虑在调用前后记录日志、更新状态。若handler返回了结果且需要转化为新事件，也可在此直接调用`post_event`发布后续事件。
+    * `run()`: 循环调用`process_next_event()`，持续运行直至队列为空或者接收到终止信号。可以在独立线程/协程中运行`run`方法，使黑板不停监听事件；也可以每当post\_event后立即调用一次处理当前事件（同步阻塞），简化逻辑。
+    * （可选）`get_state(task_id)`: 查询任务状态，用于监控或调试。
+
+* **调度实现：** 简单起见，可采用同步顺序处理：每次只处理一个事件，完成后再处理下一个。这可以避免并发引发的数据竞态，并便于按逻辑顺序串联任务（如先设计再评估）。鉴于DeepSeek-R1调用本身是耗时IO，可以考虑在实际实现中使用异步IO或线程池，但在指导方案中首要强调逻辑正确性。若并发处理多个任务，则需要通过任务ID将事件进行分组，黑板可以依据`event.data`中的任务标识将不同实验任务的事件并行处理，不同任务互不影响。
+
+* **日志和持久化：** 黑板可以在内部维护一份事件日志列表，将处理过的事件标记状态（例如添加`status`字段：`new` -> `processing` -> `done`）。这份日志相当于不可变事件流，作为“事实来源”供需要的Agent查阅。实现上，可以简单地在`post_event`时记录事件，在处理完毕后给事件对象加状态或移动到已处理列表。必要时可将日志持久化（比如保存为JSON文件或数据库）以支持长任务或重启恢复。
+
+* **错误处理：** 若Agent执行抛异常或返回结果格式不符，黑板应捕获异常并记录错误事件。例如定义事件类型`Error`，包含错误消息、来源Agent等信息，由黑板或Agent发布，供系统监控。黑板接收到`Error`事件后可以决定重试还是终止任务，并标记任务状态为失败。
+
+通过上述结构，黑板模块实现了松耦合的事件驱动调度。在 Cursor 项目中，可将黑板作为主控模块启动，注册各Agent后，监听用户请求事件进入系统。黑板的设计保证了扩展性：如果未来增加新的Agent（如执行实验步骤的Agent等），只需定义新事件类型并订阅对应Agent，主流程无需重大修改。
+
+## 评估 Agent
+
+**功能目标：** 评估 Agent 扮演审稿人或质控专家的角色，对实验设计 Agent 提供的方案进行质量评估。一方面，它要根据多维度指标对实验方案本身的优劣打分（如方案的可行性、逻辑性、创新性等）；另一方面，它还要评价各 Agent 在协作过程中的表现（例如多Agent配合是否高效）。最终输出结构化的评分结果，并可选地生成一份文字报告总结。这有助于从客观角度衡量方案质量，并为改进提供反馈。
+
+**输入输出设计：** 评估 Agent 的输入包括**待评估的实验方案**以及**协作过程的信息**。输出则是各项评分和评语。具体字段设计如下：
+
+* **输入字段：** 至少需要提供实验设计 Agent 产出的完整实验方案数据（即前述`ExperimentPlan`的 JSON）。此外，可以提供额外上下文供评估，比如原始实验目标，以检查方案是否满足目标，以及协作过程日志或摘要，以评估多Agent协作效率。设计如下：
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "experiment_plan": { "$ref": "#/definitions/ExperimentPlan" },  // 引用前述ExperimentPlan结构
+      "original_goal": { "type": "string" },         // 实验最初目标（可选，用于核对方案契合度）
+      "agent_logs": {                                // 协作过程的日志或摘要（可选）
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "generate_report": { "type": "boolean" }       // 是否需要生成文字报告（可选，默认true）
+    },
+    "required": ["experiment_plan"]
+  }
+  ```
+
+  *说明：* `experiment_plan`字段包含需要评估的实验方案JSON对象。`original_goal`可提供实验的原始意图，评估 Agent 可对比方案与目标的契合程度。`agent_logs`可以是一个字符串列表，记录各Agent在任务流程中的关键输出或交互（例如设计Agent产出概要、评估Agent自身的反馈等），用于分析协作效率。`generate_report`是一个布尔标志，指示是否生成详细的文字报告说明，默认为需要报告。
+
+* **输出字段：** 评估 Agent 输出**结构化评分**，涵盖多项预定义维度，以及可选的总体评述报告。建议评分采用数值（如1-10）或等级，以及提供简短评语解释。设计如下输出JSON结构：
+
+  ```json
+  {
+    "type": "object",
+    "properties": {
+      "scores": {
+        "type": "object",
+        "properties": {
+          "feasibility":   { "type": "number" },  // 可行性得分
+          "logic":         { "type": "number" },  // 逻辑严谨性得分
+          "creativity":    { "type": "number" },  // 创新性得分
+          "collaboration": { "type": "number" }   // 协作效率得分
+        },
+        "required": ["feasibility", "logic", "creativity", "collaboration"]
+      },
+      "comments": {
+        "type": "object",
+        "properties": {
+          "feasibility":   { "type": "string" },  // 可行性评语
+          "logic":         { "type": "string" },  // 逻辑性评语
+          "creativity":    { "type": "string" },  // 创新性评语
+          "collaboration": { "type": "string" }   // 协作效率评语
+        }
+      },
+      "overall_score": { "type": "number" },       // 总体评分（可选综合得分）
+      "report": { "type": "string" }               // 综合评价报告（可选，大段文字）
+    },
+    "required": ["scores"]
+  }
+  ```
+
+  *说明：* `scores`对象下列出各评价维度的数值评分，例如`feasibility`（方案在实际操作中的可行性）、
+  `logic`（方案步骤和推理的逻辑正确性）、`creativity`（方案的新颖程度）以及`collaboration`（多Agent协作的效率，例如是否快速达成方案、沟通是否有效）。`comments`对象可选，包括每个维度的简短评语，解释扣分或加分的原因，帮助理解评分。`overall_score`可选，用于给出一个综合评分（例如各项的加权或平均）。`report`字段可选，若需要详细报告，Agent将在此提供一篇对方案优缺点的总结、改进建议等。通过这种结构化输出，系统或用户可以直接读取各项评分数字，也能获取评语或报告以供分析。
+
+**黑板交互：** 评估 Agent 在黑板架构中主要**订阅**实验方案事件并**发布**评估结果事件：
+
+* **订阅事件类型：** `ExperimentPlan`。当实验设计 Agent 输出方案后，黑板发布`ExperimentPlan`事件，评估 Agent 监听到此事件即开始评估流程。
+* **处理逻辑：** 评估 Agent 收到事件后，从中提取`experiment_plan`数据（以及可能的`original_goal`，黑板可将用户最初目标一并附加到事件数据）。它据此调用 DeepSeek-R1 执行评价。评价时也可利用黑板上的日志（如`agent_logs`），了解实验设计 Agent 的工作过程，例如设计耗时、交互轮次，以辅助评估“协作效率”维度。评估完成后，Agent 将结果发送回黑板。
+* **发布事件类型：** `EvaluationReport`。评估 Agent 完成时向黑板写入评估结果事件，内含上述输出JSON数据，来源标记为评估 Agent。这一事件表示整条任务流程的最终结果已经生成。
+
+在事件格式上，`EvaluationReport`事件的data字段就是评估输出的JSON。黑板接收到该事件后，可将结果提供给用户界面或用于决策（例如，若评分过低可能触发重新设计流程）。
+
+**Prompt 模板设计（中文）：** 为指导 DeepSeek-R1 生成评估结果，我们构造评估 Agent 的提示词，应让模型针对实验方案在各维度进行分析评分，并输出JSON格式结果。以下是提示模板示例：
+
+````markdown
+系统角色：你是一名科研方案评估专家。你的任务是从可行性、逻辑性、创新性和协作效率等方面评价给定的实验方案，并给出评分和评价。
+
+用户提供的实验方案JSON如下：  
+```
+{实验方案JSON内容}
+```  
+
+请阅读上述实验方案，并考虑以下评估维度对其打分：
+1. **可行性**：实验在现实中执行的可行程度（考虑条件、设备是否充分，步骤是否切实可行）。
+2. **逻辑性**：实验设计思路和步骤的合理严谨程度（步骤顺序是否合理，有无漏洞）。
+3. **创新性**：方案的新颖独特程度（是否有创意，区别于常规方案）。
+4. **协作效率**：在本方案制订过程中，各Agent协同工作的效率和有效性（例如设计Agent是否一次性给出高质量方案，是否需要多次往返修正）。
+
+请为每个维度在1-10分范围打分，并各给一两句评语解释理由。同时，如果需要的话，对整个方案写一个总结评价。输出请采用JSON格式，包含字段：
+- `scores`: 各维度评分（feasibility, logic, creativity, collaboration）。
+- `comments`: 各维度对应的评语。
+- 可选的 `overall_score`: 综合评分（若你认为有必要）。
+- 可选的 `report`: 对方案的整体评述和改进建议。
+
+> **重要提示**：输出必须是**符合上述结构的JSON**，且仅包含JSON内容。
+````
+
+在该提示中，系统角色将模型定位为“科研方案评估专家”，让其明确职责。用户部分提供了需要评估的实验方案JSON（可以直接给出JSON字符串，模型具备解析JSON内容的能力）。提示接着逐条列出需要考量的**评估维度**及其含义，引导模型逐点分析。要求模型给每项维度打分并简要说明原因，使输出更有解释性。最后指定输出JSON格式及字段要求。这种明确的格式要求配合 DeepSeek-R1 的JSON输出特性，能够促使模型产出符合schema的结构化结果。
+
+由于评估 Agent 可能需要知道协作效率这一维度，它需要**感知各 Agent 的输入输出内容**。在提示中我们通过描述“方案制订过程”来暗示这一点。如果系统流程较简单（只有一次设计就得到方案），协作效率可根据一次交互就成功来给高分；如果流程包含多轮或黑板日志表明设计方案反复修改，则协作效率评分应相对降低。我们也可以在调用评估 Agent 前，利用黑板日志信息自动生成一段协作过程摘要并附加到提示中。例如，`agent_logs`可以转述“设计Agent一次生成方案，评估Agent直接评估，没有重复交互”，模型据此判断协作效率很高。这些实现细节可以在代码中通过构造提示时加入。关键是，评估 Agent 有权限从黑板获取任务全过程的信息，从而进行更全面的评价。
+
+**代码组织建议：** 评估 Agent 的实现也应独立模块化（如文件`evaluation_agent.py`），定义一个类如`EvaluationAgent`，其结构和行为类似实验设计Agent，但侧重评估逻辑：
+
+* **属性：** `name="evaluation_agent"`，DeepSeek-R1 API 客户端，同样可以有预设的系统提示模板或参考schema。
+* **方法：** `evaluate_plan(plan_data, context)`：接收实验方案数据以及上下文（原始目标、日志等），组装评估Prompt并调用模型获取评估结果。`context`可以是一个字典包含前述可选字段，比如 `{"original_goal": ..., "agent_logs": ..., "need_report": ...}`。方法内部将这些信息融合进提示模板中。例如：如果`original_goal`存在，可在提示里增加一条“此外，请判断方案是否满足了最初的目标：{original\_goal}”；如果`agent_logs`有内容，可在协作效率说明中引用这些细节。
+* **方法：** `handle_event(event)`：当收到`ExperimentPlan`事件时触发，提取其中的方案数据和上下文（黑板可在事件的data里附加原始goal等）。然后调用`evaluate_plan`生成结果。拿到模型返回的JSON字符串后，解析为Python对象并返回，或者直接调用黑板发布`EvaluationReport`事件。
+* **提示模板复用：** 类似设计Agent，将提示的各部分（如各维度说明列表）存为模板常量。注意对于方案JSON的纳入，可以在Prompt中直接插入方案文本。实现时，可用`json.dumps(plan_data, ensure_ascii=False, indent=2)`将字典转为易读的JSON字符串插入提示（使用Markdown的代码块格式以防模型将其当做自然语言）。模型会在提示中看到方案结构，从而据此评估。
+* **DeepSeek-R1 API调用：** 同样使用DeepSeek-R1客户端，但在调用时仍设置`response_format={"type":"json_object"}`以确保输出为JSON。在提示中要求只输出JSON。拿到结果后，应该验证其格式。如果解析失败，可以考虑让模型只输出评分表不包含过多自由文本，以减少出错概率。必要时可增加后处理，如检查缺失字段并二次请求补充。
+* **文件划分：** 可以在`schemas.py`或本模块中存储评估输出的JSON Schema，用于对模型输出进行验证。如果输出不符合schema，可以记录错误或尝试再次提示模型修正。在Cursor项目中，可以借助 Pydantic 定义一个数据模型类来验证输出，例如：
+
+  ```python
+  class EvaluationResult(BaseModel):
+      scores: Dict[str, int]
+      comments: Dict[str, str] = None
+      overall_score: int = None
+      report: str = None
+  ```
+
+  这样方便地验证类型和必需字段。
+
+通过模块化的设计，评估 Agent 可独立测试。例如，给定一个人工构造的实验方案JSON调用`evaluate_plan`，检查是否返回合理的评分JSON。在实际系统运行时，评估 Agent 由黑板调度，无需关心是谁产生了方案，只根据方案内容和日志来评分，实现了与设计 Agent 的解耦。
+
+## 综合建议与扩展
+
+上述三个模块协同构成了一个**多Agent科研助理系统**。它以黑板系统为核心枢纽，实现事件驱动的Agent协作：设计 Agent 专注于生成方案，评估 Agent 专注于质量把关，黑板负责通信和顺序控制。所有大模型调用均通过 DeepSeek-R1 API 完成，实现智能推理。
+
+在开发过程中，可选用 AutoGen、LangGraph 等框架对Agent对话和工具使用进行封装。这些框架提供了对多Agent对话模式的支持（如回合制对话、角色设置等），以及与模型API的集成。比如，Microsoft AutoGen 可以用 `AssistantAgent` 定义我们的设计和评估Agent，用一个中枢代理或直接使用AutoGen的组对话模式来模拟黑板调度。然而，本方案并不强制依赖此类框架，实现黑板模式需要更精细的控制，直接使用定制代码可能更透明易控。此外，DeepSeek-R1 当前可能不支持OpenAI式的函数调用功能，因此我们主要通过提示和结构化输出来约束模型行为。
+
+**安全与验证：** 由于生成的实验方案可能涉及安全/伦理，评估 Agent 还可扩充维度如“安全性”来检查方案是否安全可行。如果需要进一步扩展系统功能，可以增加更多Agent，例如**实验优化 Agent**（读取评估结果后自动修改方案提升得分），**实验执行 Agent**（将方案转译为实验操作指令）等。这些都可通过黑板事件机制无缝集成。
+
+**总结**：本开发指导方案详细定义了实验设计 Agent、控制调度黑板、评估 Agent 各自的职责、接口和交互方式，并给出了高质量的提示词模板和代码组织建议。遵循此方案，开发者可以在 Cursor 环境下高效地实现多Agent协作的科研助理系统：通过 DeepSeek-R1 强大的自然语言生成与推理能力，配合结构化的数据交换和严谨的架构设计，系统将能输出高质量的实验方案并进行客观评估，为科研工作提供有力支持。
+
+**参考文献：**
+
+* 黑板模式及其在多Agent系统中的作用
+* DeepSeek-R1 模型的 JSON 输出特性及使用方法

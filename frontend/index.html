@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>真实Agent科研协作系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.0/dist/vis-network.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.0/dist/dist/vis-network.min.css" rel="stylesheet">
+    <style>
+        body { 
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+        h1 { 
+            color: #2c3e50; 
+            text-align: center; 
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* 会话管理面板样式 */
+        .session-panel {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .session-header h3 {
+            margin: 0;
+            color: #495057;
+            font-size: 1.4em;
+        }
+
+        .session-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .session-controls select {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            background: white;
+            font-size: 14px;
+        }
+
+        .session-info {
+            margin-top: 15px;
+        }
+
+        .session-details h4 {
+            color: #2c3e50;
+            margin: 0 0 10px 0;
+            font-size: 1.2em;
+        }
+
+        .session-desc {
+            color: #6c757d;
+            margin-bottom: 15px;
+            font-style: italic;
+        }
+
+        .session-meta {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .session-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .session-created {
+            color: #6c757d;
+            font-size: 12px;
+        }
+
+        .session-tasks {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            border: 1px solid #e9ecef;
+        }
+
+        .session-tasks h5 {
+            margin: 0 0 10px 0;
+            color: #495057;
+        }
+
+        .task-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .task-item {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .task-item:hover {
+            background: #e9ecef;
+            transform: translateY(-1px);
+        }
+
+        .task-type {
+            background: #007bff;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .task-time {
+            color: #6c757d;
+            font-size: 11px;
+            margin-left: 10px;
+        }
+
+        .task-query {
+            margin-top: 5px;
+            font-size: 13px;
+            color: #495057;
+        }
+
+        /* 模态框样式 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+            width: 90%;
+            max-width: 500px;
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px) scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 25px 15px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .modal-header h4 {
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #6c757d;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+
+        .modal-close:hover {
+            background: #f8f9fa;
+            color: #495057;
+        }
+
+        .modal-body {
+            padding: 25px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 15px 25px 25px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 15px;
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+            box-sizing: border-box;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+        }
+
+        textarea.form-control {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        /* 按钮样式 */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #545b62;
+            transform: translateY(-1px);
+        }
+
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card-shadow {
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        .agent-card:hover {
+            transform: translateY(-2px);
+            transition: all 0.3s ease;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-active { background-color: #10b981; }
+        .status-busy { background-color: #f59e0b; }
+        .status-idle { background-color: #6b7280; }
+        .status-error { background-color: #ef4444; }
+        
+        .thinking-animation {
+            animation: thinking 2s infinite;
+        }
+        
+        @keyframes thinking {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+        
+        .message-bubble {
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        
+        .user-message {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin-left: auto;
+        }
+        
+        .agent-message {
+            background: #f3f4f6;
+            color: #1f2937;
+        }
+        
+        .knowledge-graph {
+            height: 400px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+        }
+        
+        .chain-of-thought {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .chain-step {
+            border-left: 3px solid #3b82f6;
+            padding-left: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .metrics-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .progress-ring {
+            transform: rotate(-90deg);
+        }
+        
+        .progress-ring-circle {
+            transition: stroke-dashoffset 0.35s;
+            transform-origin: 50% 50%;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border-radius: 0.375rem;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+        
+        .badge-success {
+            background-color: #10b981;
+            color: white;
+        }
+        
+        .badge-warning {
+            background-color: #f59e0b;
+            color: white;
+        }
+        
+        .badge-info {
+            background-color: #3b82f6;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- 主容器 -->
+    <div class="container mx-auto px-4 py-6">
+        
+        <!-- 标题栏 -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center">
+                        <i class="fas fa-robot text-3xl text-blue-600 mr-3"></i>
+                        <div>
+                            <h1 class="text-2xl font-bold text-gray-800">真实Agent科研协作系统</h1>
+                            <p class="text-sm text-gray-600">专业智能协作研究平台 | 基于真实Agent技术</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 系统状态指示器 -->
+                    <div class="flex items-center space-x-3">
+                        <div class="flex items-center">
+                            <div id="system-status-indicator" class="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
+                            <span id="system-status-text" class="text-sm text-gray-600">系统运行正常</span>
+                        </div>
+                        
+                        <!-- 系统类型徽章 -->
+                        <span id="system-type-indicator" class="badge badge-success">真实Agent系统</span>
+                    </div>
+                </div>
+                
+                <!-- 操作按钮 -->
+                <div class="flex items-center space-x-2">
+                    <button id="settings-btn" class="p-2 text-gray-600 hover:text-blue-600 rounded-lg hover:bg-gray-100">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                    <button id="clear-history-btn" class="p-2 text-gray-600 hover:text-red-600 rounded-lg hover:bg-gray-100" title="清空聊天历史">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                    <button id="export-data-btn" class="p-2 text-gray-600 hover:text-green-600 rounded-lg hover:bg-gray-100" title="导出数据">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button id="system-restart-btn" class="p-2 text-gray-600 hover:text-orange-600 rounded-lg hover:bg-gray-100" title="重启系统">
+                        <i class="fas fa-power-off"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    <!-- 顶部导航栏 -->
+    <nav class="gradient-bg text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <i class="fas fa-brain text-2xl mr-3"></i>
+                    <h1 class="text-xl font-bold">科研多Agent系统</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                        <div class="flex items-center space-x-3">
+                    <div class="flex items-center">
+                        <span class="status-indicator" id="system-status"></span>
+                        <span id="system-status-text">系统状态</span>
+                            </div>
+                            <div class="flex items-center">
+                                <i class="fas fa-robot mr-2"></i>
+                                <span id="system-type-indicator" class="badge badge-warning" title="当前Agent系统类型">检测中...</span>
+                            </div>
+                    </div>
+                                            <button id="settings-btn" class="p-2 rounded-lg hover:bg-white hover:bg-opacity-20" title="API配置">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主内容区域 -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            
+            <!-- 左侧：系统监控面板 -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-tachometer-alt mr-2 text-blue-500"></i>
+                        系统监控
+                    </h2>
+                    
+                    <!-- Agent状态 -->
+                    <div class="space-y-3" id="agent-status-list">
+                        <!-- Agent状态将通过JavaScript动态加载 -->
+                    </div>
+                        
+                        <!-- 系统类型信息 -->
+                        <div class="mt-6 p-3 bg-gray-50 rounded-lg">
+                            <h3 class="font-medium mb-2 text-gray-700">当前系统</h3>
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm text-gray-600">Agent系统:</span>
+                                <span id="current-system-type" class="text-sm font-medium">检测中...</span>
+                            </div>
+                        </div>
+                    
+                    <!-- 系统指标 -->
+                    <div class="mt-6">
+                        <h3 class="font-medium mb-3">性能指标</h3>
+                        <div class="space-y-2">
+                            <div class="flex justify-between text-sm">
+                                <span>CPU使用率</span>
+                                <span id="cpu-usage">--</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span>内存使用率</span>
+                                <span id="memory-usage">--</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span>活跃会话</span>
+                                <span id="active-sessions">--</span>
+                            </div>
+                            <div class="flex justify-between text-sm">
+                                <span>完成任务</span>
+                                <span id="completed-tasks">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 快速操作 -->
+                <div class="bg-white rounded-lg card-shadow p-6">
+                    <h3 class="font-medium mb-3">快速操作</h3>
+                    <div class="space-y-2">
+                        <button id="clear-history-btn" class="w-full px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-left">
+                            <i class="fas fa-trash mr-2"></i>清除历史记录
+                        </button>
+                        <button id="export-data-btn" class="w-full px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg text-left">
+                            <i class="fas fa-download mr-2"></i>导出数据
+                        </button>
+                        <button id="system-restart-btn" class="w-full px-3 py-2 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-left">
+                            <i class="fas fa-redo mr-2"></i>重启系统
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 中间：主研究界面 -->
+            <div class="lg:col-span-2">
+                <!-- 研究输入区域 -->
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-search mr-2 text-green-500"></i>
+                        智能研究助手
+                    </h2>
+                    
+                    <div class="space-y-4">
+                        <textarea 
+                            id="research-input" 
+                            placeholder="请输入您的研究问题或需求..."
+                            class="w-full h-24 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                        ></textarea>
+                        
+                        <!-- API配置面板 -->
+                        <div id="api-config-panel" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4" style="display: none;">
+                            <h4 class="font-medium text-blue-800 mb-3">
+                                <i class="fas fa-cog mr-2"></i>API配置
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">API提供商</label>
+                                    <select id="api-provider" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" onchange="app.updateModelOptions()">
+                                        <option value="DeepSeek">DeepSeek</option>
+                                        <option value="OpenRouter">OpenRouter</option>
+                                        <option value="Anthropic">Anthropic</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">模型选择</label>
+                                    <select id="api-model" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                        <!-- 动态加载 -->
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="flex justify-between items-center mt-3">
+                                <span class="text-sm text-gray-600">当前配置: <span id="current-config">加载中...</span></span>
+                                <button id="apply-config" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                    <i class="fas fa-check mr-1"></i>应用配置
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-center space-x-4">
+                            <select id="research-mode" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <option value="auto">智能模式</option>
+                                <option value="deep">深度分析</option>
+                                <option value="fast">快速模式</option>
+                                <option value="collaborative">协作模式</option>
+                            </select>
+                            
+                            <select id="priority-level" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                <option value="normal">普通优先级</option>
+                                <option value="high">高优先级</option>
+                                <option value="urgent">紧急</option>
+                            </select>
+                            
+                            <button 
+                                id="submit-research-btn" 
+                                class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                            >
+                                <i class="fas fa-paper-plane mr-2"></i>开始研究
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 对话区域 -->
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-comments mr-2 text-purple-500"></i>
+                        研究对话
+                    </h3>
+                    
+                    <div id="chat-messages" class="space-y-4 h-96 overflow-y-auto p-4 bg-gray-50 rounded-lg">
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-robot text-4xl mb-4"></i>
+                            <p>欢迎使用科研多Agent系统！请输入您的研究问题开始对话。</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 思维链显示 -->
+                    <div class="mt-4 p-4 bg-blue-50 rounded-lg" id="chain-of-thought" style="display: none;">
+                        <h4 class="font-medium mb-2 flex items-center">
+                            <i class="fas fa-brain mr-2 text-blue-500"></i>
+                            思维链过程
+                        </h4>
+                        <div id="chain-steps" class="chain-of-thought">
+                            <!-- 思维链步骤将动态添加 -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 研究进度 -->
+                <div class="bg-white rounded-lg card-shadow p-6" id="research-progress" style="display: none;">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-tasks mr-2 text-orange-500"></i>
+                        研究进度
+                    </h3>
+                    
+                    <div class="space-y-3" id="task-progress-list">
+                        <!-- 任务进度将动态添加 -->
+                    </div>
+                    
+                    <div class="mt-4 bg-gray-200 rounded-full h-2">
+                        <div id="overall-progress" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    <div class="text-sm text-gray-600 mt-2 text-center">
+                        <span id="progress-text">准备开始...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 右侧：结果展示区域 -->
+            <div class="lg:col-span-1">
+                <!-- 增强协作黑板 -->
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-chalkboard mr-2 text-indigo-500"></i>
+                        协作黑板 - 增强版
+                        <div class="ml-auto flex items-center space-x-2">
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
+                                <span class="w-2 h-2 bg-green-400 rounded-full mr-1 animate-pulse"></span>
+                                实时同步
+                            </span>
+                        </div>
+                    </h3>
+                    
+                    <!-- 性能指标 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2">性能指标</h4>
+                        <div id="performance-metrics" class="bg-gradient-to-r from-blue-50 to-purple-50 rounded p-3">
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                                <div class="flex items-center">
+                                    <i class="fas fa-tachometer-alt text-blue-500 mr-1"></i>
+                                    <span>操作次数: 0</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-clock text-green-500 mr-1"></i>
+                                    <span>响应时间: 0.00s</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-users-cog text-purple-500 mr-1"></i>
+                                    <span>并发Agent: 0</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-sync-alt text-indigo-500 mr-1"></i>
+                                    <span>数据同步: 实时</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 协作统计 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2">协作统计</h4>
+                        <div id="collaboration-stats" class="bg-gradient-to-r from-green-50 to-yellow-50 rounded p-3">
+                            <div class="grid grid-cols-2 gap-2 text-xs">
+                                <div class="flex items-center">
+                                    <i class="fas fa-robot text-green-500 mr-1"></i>
+                                    <span>活跃Agent: 0</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-comments text-blue-500 mr-1"></i>
+                                    <span>会话数: 0</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-handshake text-purple-500 mr-1"></i>
+                                    <span>协作事件: 0</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-exchange-alt text-orange-500 mr-1"></i>
+                                    <span>数据交换: 0次</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Agent状态概览 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                            <i class="fas fa-users mr-2"></i>
+                            Agent状态
+                        </h4>
+                        <div id="blackboard-agents" class="space-y-3">
+                            <!-- 信息收集Agent -->
+                            <div id="agent-information" class="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-search text-blue-500 mr-2"></i>
+                                        <span class="text-sm font-medium text-blue-700">信息收集Agent</span>
+                                    </div>
+                                    <span id="status-information" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded">待机</span>
+                                </div>
+                                <div id="task-information" class="text-xs text-blue-600 mb-2">等待任务分配...</div>
+                                <div class="w-full bg-blue-200 rounded-full h-1.5">
+                                    <div id="progress-information" class="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- 建模分析Agent -->
+                            <div id="agent-modeling" class="bg-green-50 rounded-lg p-3 border border-green-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-brain text-green-500 mr-2"></i>
+                                        <span class="text-sm font-medium text-green-700">建模分析Agent</span>
+                                    </div>
+                                    <span id="status-modeling" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded">待机</span>
+                                </div>
+                                <div id="task-modeling" class="text-xs text-green-600 mb-2">等待任务分配...</div>
+                                <div class="w-full bg-green-200 rounded-full h-1.5">
+                                    <div id="progress-modeling" class="bg-green-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- 验证评估Agent -->
+                            <div id="agent-verification" class="bg-purple-50 rounded-lg p-3 border border-purple-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-check-double text-purple-500 mr-2"></i>
+                                        <span class="text-sm font-medium text-purple-700">验证评估Agent</span>
+                                    </div>
+                                    <span id="status-verification" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded">待机</span>
+                                </div>
+                                <div id="task-verification" class="text-xs text-purple-600 mb-2">等待任务分配...</div>
+                                <div class="w-full bg-purple-200 rounded-full h-1.5">
+                                    <div id="progress-verification" class="bg-purple-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- 报告生成Agent -->
+                            <div id="agent-report" class="bg-orange-50 rounded-lg p-3 border border-orange-200">
+                                <div class="flex items-center justify-between mb-2">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-file-alt text-orange-500 mr-2"></i>
+                                        <span class="text-sm font-medium text-orange-700">报告生成Agent</span>
+                                    </div>
+                                    <span id="status-report" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded">待机</span>
+                                </div>
+                                <div id="task-report" class="text-xs text-orange-600 mb-2">等待任务分配...</div>
+                                <div class="w-full bg-orange-200 rounded-full h-1.5">
+                                    <div id="progress-report" class="bg-orange-500 h-1.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Agent协作流程 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                            <i class="fas fa-project-diagram mr-2 text-indigo-500"></i>
+                            协作流程
+                        </h4>
+                        <div id="collaboration-flow" class="bg-indigo-50 rounded p-3">
+                            <div class="flex items-center justify-between text-xs">
+                                <!-- 信息收集 -->
+                                <div class="flex flex-col items-center">
+                                    <div id="flow-information" class="w-8 h-8 bg-blue-200 rounded-full flex items-center justify-center mb-1 transition-all duration-300">
+                                        <i class="fas fa-search text-blue-600 text-xs"></i>
+                                    </div>
+                                    <span class="text-blue-600">信息</span>
+                                </div>
+                                
+                                <!-- 箭头 -->
+                                <div class="flex items-center">
+                                    <div id="arrow-1" class="w-4 h-0.5 bg-gray-300 transition-all duration-500"></div>
+                                    <i class="fas fa-chevron-right text-gray-400 mx-1"></i>
+                                </div>
+                                
+                                <!-- 建模分析 -->
+                                <div class="flex flex-col items-center">
+                                    <div id="flow-modeling" class="w-8 h-8 bg-green-200 rounded-full flex items-center justify-center mb-1 transition-all duration-300">
+                                        <i class="fas fa-brain text-green-600 text-xs"></i>
+                                    </div>
+                                    <span class="text-green-600">建模</span>
+                                </div>
+                                
+                                <!-- 箭头 -->
+                                <div class="flex items-center">
+                                    <div id="arrow-2" class="w-4 h-0.5 bg-gray-300 transition-all duration-500"></div>
+                                    <i class="fas fa-chevron-right text-gray-400 mx-1"></i>
+                                </div>
+                                
+                                <!-- 验证评估 -->
+                                <div class="flex flex-col items-center">
+                                    <div id="flow-verification" class="w-8 h-8 bg-purple-200 rounded-full flex items-center justify-center mb-1 transition-all duration-300">
+                                        <i class="fas fa-check-double text-purple-600 text-xs"></i>
+                                    </div>
+                                    <span class="text-purple-600">验证</span>
+                                </div>
+                                
+                                <!-- 箭头 -->
+                                <div class="flex items-center">
+                                    <div id="arrow-3" class="w-4 h-0.5 bg-gray-300 transition-all duration-500"></div>
+                                    <i class="fas fa-chevron-right text-gray-400 mx-1"></i>
+                                </div>
+                                
+                                <!-- 报告生成 -->
+                                <div class="flex flex-col items-center">
+                                    <div id="flow-report" class="w-8 h-8 bg-orange-200 rounded-full flex items-center justify-center mb-1 transition-all duration-300">
+                                        <i class="fas fa-file-alt text-orange-600 text-xs"></i>
+                                    </div>
+                                    <span class="text-orange-600">报告</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 思考链 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                            <i class="fas fa-brain mr-2 text-purple-500"></i>
+                            思考链
+                        </h4>
+                        <div id="thought-chain" class="bg-purple-50 rounded p-3 h-24 overflow-y-auto text-xs">
+                            <div class="text-gray-500 text-center py-2">暂无思考过程</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 事件流 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                            <i class="fas fa-stream mr-2 text-blue-500"></i>
+                            事件流
+                        </h4>
+                        <div id="blackboard-events" class="bg-blue-50 rounded p-3 h-24 overflow-y-auto text-xs">
+                            <div class="text-gray-500 text-center py-2">暂无事件</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 共享数据 -->
+                    <div class="mb-4">
+                        <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                            <i class="fas fa-database mr-2 text-green-500"></i>
+                            共享数据
+                        </h4>
+                        <div id="blackboard-data" class="bg-gray-50 rounded p-3 h-32 overflow-y-auto text-xs">
+                            <div class="text-center text-gray-500 py-4">
+                                <i class="fas fa-database text-xl mb-2"></i>
+                                <p>暂无共享数据</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 操作日志 -->
+                    <div>
+                        <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                            <i class="fas fa-terminal mr-2 text-gray-500"></i>
+                            操作日志
+                        </h4>
+                        <div id="blackboard-logs" class="bg-gray-900 text-green-400 rounded p-3 h-24 overflow-y-auto text-xs font-mono">
+                            <div class="text-gray-500">系统就绪，等待操作...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 知识图谱 -->
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6" style="display: none;">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-project-diagram mr-2 text-red-500"></i>
+                        知识图谱
+                    </h3>
+                    <div id="knowledge-graph" class="knowledge-graph">
+                        <div class="flex items-center justify-center h-full text-gray-500">
+                            <div class="text-center">
+                                <i class="fas fa-network-wired text-4xl mb-2"></i>
+                                <p>等待数据加载...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 研究结果 -->
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-chart-bar mr-2 text-yellow-500"></i>
+                        研究结果
+                    </h3>
+                    <div id="research-results" class="space-y-3">
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-file-alt text-4xl mb-4"></i>
+                            <p>暂无研究结果</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 系统日志 -->
+                <div class="bg-white rounded-lg card-shadow p-6">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center">
+                        <i class="fas fa-list mr-2 text-gray-500"></i>
+                        系统日志
+                    </h3>
+                    <div id="system-logs" class="text-xs space-y-1 h-48 overflow-y-auto bg-gray-900 text-green-400 p-3 rounded font-mono">
+                        <div>系统初始化中...</div>
+                    </div>
+                </div>
+
+                <!-- 系统监控 -->
+                <div class="mb-4">
+                    <h4 class="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                        <i class="fas fa-desktop mr-2 text-green-500"></i>
+                        系统监控
+                    </h4>
+                    <div id="system-monitor" class="bg-green-50 rounded p-3 space-y-3">
+                        <!-- 系统健康状态 -->
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-gray-600">系统健康:</span>
+                            <div class="flex items-center">
+                                <div id="health-indicator" class="w-2 h-2 bg-green-500 rounded-full mr-1"></div>
+                                <span id="health-status" class="text-xs font-medium text-green-600">良好</span>
+                                <span id="health-score" class="text-xs text-gray-500 ml-1">(85%)</span>
+                            </div>
+                        </div>
+                        
+                        <!-- CPU使用率 -->
+                        <div class="space-y-1">
+                            <div class="flex items-center justify-between text-xs">
+                                <span class="text-gray-600">CPU使用率:</span>
+                                <span id="cpu-percent" class="font-medium">0%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-1">
+                                <div id="cpu-bar" class="bg-blue-500 h-1 rounded-full transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 内存使用率 -->
+                        <div class="space-y-1">
+                            <div class="flex items-center justify-between text-xs">
+                                <span class="text-gray-600">内存使用:</span>
+                                <span id="memory-percent" class="font-medium">0%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-1">
+                                <div id="memory-bar" class="bg-orange-500 h-1 rounded-full transition-all duration-300" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- WebSocket连接 -->
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="text-gray-600">WebSocket连接:</span>
+                            <span id="websocket-connections" class="font-medium text-blue-600">0</span>
+                        </div>
+                        
+                        <!-- 活跃会话 -->
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="text-gray-600">活跃会话:</span>
+                            <span id="active-sessions" class="font-medium text-purple-600">0</span>
+                        </div>
+                        
+                        <!-- 最后更新时间 -->
+                        <div class="text-xs text-gray-400 text-center pt-2 border-t border-green-200">
+                            最后更新: <span id="monitor-timestamp">--:--:--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置模态框 -->
+    <div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50">
+        <div class="flex items-center justify-center h-full">
+            <div class="bg-white rounded-lg p-6 w-96 max-w-full mx-4">
+                <h3 class="text-lg font-semibold mb-4">系统设置</h3>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2">API端点</label>
+                        <input id="api-endpoint" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg" value="http://localhost:8000">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium mb-2">WebSocket端点</label>
+                        <input id="ws-endpoint" type="text" class="w-full px-3 py-2 border border-gray-300 rounded-lg" value="ws://localhost:8000/ws">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium mb-2">自动刷新间隔(秒)</label>
+                        <input id="refresh-interval" type="number" class="w-full px-3 py-2 border border-gray-300 rounded-lg" value="5" min="1" max="60">
+                    </div>
+                    
+                    <div class="flex items-center">
+                        <input id="enable-notifications" type="checkbox" class="mr-2" checked>
+                        <label class="text-sm">启用通知</label>
+                    </div>
+                </div>
+                
+                <div class="flex justify-end space-x-3 mt-6">
+                    <button id="cancel-settings" class="px-4 py-2 text-gray-600 hover:text-gray-800">取消</button>
+                    <button id="save-settings" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html> 
