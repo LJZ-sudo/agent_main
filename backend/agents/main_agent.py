@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional
 from loguru import logger
 
 from ..core.base_agent import BaseAgent
-from ..core.blackboard import BlackboardEvent, EventType
+from ..core.blackboard import BlackboardEvent, EventType, ReasoningStep
 
 
 class MainAgent(BaseAgent):
@@ -73,104 +73,332 @@ class MainAgent(BaseAgent):
             return error_result
     
     async def _analyze_and_plan_task(self, user_input: str, session_id: str) -> Dict[str, Any]:
-        """分析任务并制定计划"""
+        """分析任务并制定计划 - 增强版本，符合docs要求"""
         logger.info(f"分析任务: {user_input[:30]}...")
+        
+        # 开始推理链
+        chain_id = await self.blackboard.create_inference_chain(
+            session_id, self.agent_id, "task_analysis", {"user_input": user_input}
+        )
+        
+        # 记录问题解析步骤
+        parse_step = ReasoningStep(
+            agent_id=self.agent_id,
+            step_type="analysis",
+            description="解析用户需求和研究问题",
+            input_data={"user_input": user_input},
+            reasoning_text="开始分析用户提出的科研创意需求，识别问题类型和复杂度"
+        )
+        await self.blackboard.record_reasoning_step(parse_step)
         
         # 发布任务开始事件
         await self.blackboard.publish_event(BlackboardEvent(
             event_type=EventType.TASK_STARTED,
             agent_id=self.agent_id,
+            session_id=session_id,
             data={
-                "session_id": session_id,
                 "user_input": user_input,
-                "stage": "task_analysis"
+                "stage": "task_analysis",
+                "chain_id": chain_id
             }
         ))
         
-        # 使用LLM分析用户输入
+        # 使用LLM进行深度任务分析
         analysis_prompt = f"""
-作为科研多Agent系统的主协调者，请分析以下研究请求并制定执行计划：
+作为科研多Agent系统的主Agent，请深度分析以下研究请求并制定详细的执行计划：
 
 用户请求: {user_input}
 
-请分析：
-1. 研究问题的类型和复杂度
-2. 需要调用哪些Agent（信息检索、验证、批判、报告生成等）
-3. Agent协作的优先级和顺序
-4. 预期的输出格式
+请按以下步骤进行分析：
 
-请以JSON格式返回分析结果。
+1. **问题解析与边界定义**：
+   - 识别核心研究问题
+   - 明确研究领域和边界
+   - 提取关键概念和目标
+   - 识别约束条件和限制
+
+2. **任务分解策略**：
+   - 将问题分解为具体子任务
+   - 确定任务间的依赖关系
+   - 评估任务优先级和并行可能性
+   - 预估每个子任务的复杂度
+
+3. **Agent协作规划**：
+   - 确定需要调用的专门Agent
+   - 设计Agent间的协作序列
+   - 制定质量控制检查点
+   - 规划批判和验证环节
+
+4. **执行策略制定**：
+   - 制定分阶段执行计划
+   - 设定里程碑和检查点
+   - 预估时间和资源需求
+   - 制定风险控制措施
+
+请以JSON格式返回详细分析：
+{{
+    "problem_analysis": {{
+        "core_question": "核心研究问题",
+        "research_domain": "研究领域",
+        "key_concepts": ["概念1", "概念2"],
+        "objectives": ["目标1", "目标2"],
+        "constraints": ["约束1", "约束2"],
+        "complexity_level": "高/中/低"
+    }},
+    "task_decomposition": {{
+        "subtasks": [
+            {{
+                "task_id": "task_1",
+                "task_name": "子任务名称",
+                "description": "详细描述",
+                "agent_type": "required_agent",
+                "priority": 1,
+                "dependencies": ["dependency_task_ids"],
+                "estimated_time": "预计时间",
+                "complexity": "高/中/低",
+                "deliverables": ["交付物1", "交付物2"]
+            }}
+        ],
+        "execution_phases": [
+            {{
+                "phase": "阶段1",
+                "tasks": ["task_1", "task_2"],
+                "milestone": "里程碑描述"
+            }}
+        ]
+    }},
+    "agent_collaboration": {{
+        "required_agents": ["agent1", "agent2"],
+        "collaboration_sequence": [
+            {{
+                "step": 1,
+                "agents": ["agent1"],
+                "action": "执行动作",
+                "expected_output": "预期输出"
+            }}
+        ],
+        "quality_checkpoints": ["检查点1", "检查点2"]
+    }},
+    "execution_strategy": {{
+        "phases": ["阶段1", "阶段2"],
+        "parallel_tasks": [["可并行任务组"]],
+        "critical_path": ["关键路径任务"],
+        "risk_factors": ["风险1", "风险2"],
+        "mitigation_strategies": ["缓解策略1", "策略2"]
+    }}
+}}
 """
         
         try:
+            # 记录LLM分析步骤
+            llm_step = ReasoningStep(
+                agent_id=self.agent_id,
+                step_type="inference",
+                description="使用LLM进行任务分析和分解",
+                input_data={"prompt": analysis_prompt[:200] + "..."},
+                reasoning_text="调用LLM进行深度任务分析，制定详细执行计划"
+            )
+            await self.blackboard.record_reasoning_step(llm_step)
+            
             analysis_response = await self.llm_client.generate_text(
                 analysis_prompt,
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=2000
             )
             
             if analysis_response.success:
-                task_plan = {
-                    "session_id": session_id,
-                    "user_input": user_input,
-                    "analysis": analysis_response.content,
-                    "required_agents": ["information_enhanced", "verification", "critique", "report"],
-                    "execution_order": ["information_enhanced", "verification", "critique", "report"],
-                    "estimated_complexity": self._estimate_complexity(user_input),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                logger.info(f"任务分析完成: {len(task_plan['required_agents'])}个Agent需要参与")
-                return task_plan
+                try:
+                    # 尝试解析JSON响应
+                    analysis_data = json.loads(analysis_response.content)
+                    
+                    # 记录分析完成步骤
+                    completion_step = ReasoningStep(
+                        agent_id=self.agent_id,
+                        step_type="decision",
+                        description="完成任务分析和计划制定",
+                        input_data={"llm_response": analysis_response.content[:200] + "..."},
+                        output_data=analysis_data,
+                        reasoning_text="LLM分析完成，生成了详细的任务分解和执行计划",
+                        confidence=0.9
+                    )
+                    await self.blackboard.record_reasoning_step(completion_step)
+                    
+                    task_plan = {
+                        "session_id": session_id,
+                        "user_input": user_input,
+                        "analysis_data": analysis_data,
+                        "chain_id": chain_id,
+                        "required_agents": analysis_data.get("agent_collaboration", {}).get("required_agents", ["information_enhanced", "verification", "critique", "report"]),
+                        "execution_order": self._extract_execution_order(analysis_data),
+                        "subtasks": analysis_data.get("task_decomposition", {}).get("subtasks", []),
+                        "quality_checkpoints": analysis_data.get("agent_collaboration", {}).get("quality_checkpoints", []),
+                        "estimated_complexity": self._calculate_complexity_score(analysis_data),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    # 记录任务分解到黑板
+                    await self.blackboard.record_task_decomposition(session_id, task_plan)
+                    
+                    # 发布问题解析完成事件
+                    await self.blackboard.publish_event(BlackboardEvent(
+                        event_type=EventType.PROBLEM_PARSED,
+                        agent_id=self.agent_id,
+                        session_id=session_id,
+                        data={
+                            "problem_analysis": analysis_data.get("problem_analysis", {}),
+                            "complexity": task_plan["estimated_complexity"]
+                        }
+                    ))
+                    
+                    logger.info(f"任务分析完成: {len(task_plan['required_agents'])}个Agent需要参与")
+                    return task_plan
+                    
+                except json.JSONDecodeError:
+                    logger.warning("LLM返回的不是有效JSON，使用备用分析")
+                    return self._create_fallback_plan(user_input, session_id, chain_id)
             else:
                 logger.error(f"LLM分析失败: {analysis_response.error}")
-                return {
-                        "session_id": session_id,
-                    "user_input": user_input,
-                    "analysis": f"基础分析：{user_input}",
-                    "required_agents": ["information_enhanced", "verification", "critique", "report"],
-                    "execution_order": ["information_enhanced", "verification", "critique", "report"],
-                    "estimated_complexity": 0.5,
-                    "timestamp": datetime.now().isoformat()
-                }
+                return self._create_fallback_plan(user_input, session_id, chain_id)
             
         except Exception as e:
             logger.error(f"任务分析异常: {e}")
-            return {
-                "session_id": session_id,
-                "user_input": user_input,
-                "analysis": f"简化分析：{user_input}",
-                "required_agents": ["information_enhanced", "verification", "critique", "report"],
-                "execution_order": ["information_enhanced", "verification", "critique", "report"],
-                "estimated_complexity": 0.5,
-                "timestamp": datetime.now().isoformat()
-            }
+            return self._create_fallback_plan(user_input, session_id, chain_id)
+    
+    def _extract_execution_order(self, analysis_data: Dict[str, Any]) -> List[str]:
+        """从分析数据中提取执行顺序"""
+        collaboration = analysis_data.get("agent_collaboration", {})
+        sequence = collaboration.get("collaboration_sequence", [])
+        
+        execution_order = []
+        for step in sequence:
+            agents = step.get("agents", [])
+            for agent in agents:
+                if agent not in execution_order:
+                    execution_order.append(agent)
+        
+        # 如果没有明确顺序，使用默认顺序
+        if not execution_order:
+            execution_order = ["information_enhanced", "verification", "critique", "report"]
+            
+        return execution_order
+    
+    def _calculate_complexity_score(self, analysis_data: Dict[str, Any]) -> float:
+        """计算复杂度评分"""
+        problem_analysis = analysis_data.get("problem_analysis", {})
+        task_decomposition = analysis_data.get("task_decomposition", {})
+        
+        complexity_level = problem_analysis.get("complexity_level", "中")
+        subtask_count = len(task_decomposition.get("subtasks", []))
+        
+        base_score = {
+            "低": 0.3,
+            "中": 0.6,
+            "高": 0.9
+        }.get(complexity_level, 0.6)
+        
+        # 根据子任务数量调整
+        task_factor = min(subtask_count / 5.0, 1.0)  # 5个子任务为满分
+        
+        return min(base_score + task_factor * 0.3, 1.0)
+    
+    def _create_fallback_plan(self, user_input: str, session_id: str, chain_id: str) -> Dict[str, Any]:
+        """创建备用计划（当LLM分析失败时）"""
+        logger.info("使用备用任务分析方案")
+        
+        return {
+            "session_id": session_id,
+            "user_input": user_input,
+            "analysis_data": {
+                "problem_analysis": {
+                    "core_question": user_input,
+                    "research_domain": "通用科研",
+                    "complexity_level": "中"
+                }
+            },
+            "chain_id": chain_id,
+            "required_agents": ["information_enhanced", "verification", "critique", "report"],
+            "execution_order": ["information_enhanced", "verification", "critique", "report"],
+            "subtasks": [
+                {
+                    "task_id": "task_1",
+                    "task_name": "信息收集",
+                    "agent_type": "information_enhanced"
+                },
+                {
+                    "task_id": "task_2", 
+                    "task_name": "验证分析",
+                    "agent_type": "verification"
+                },
+                {
+                    "task_id": "task_3",
+                    "task_name": "批判评估", 
+                    "agent_type": "critique"
+                },
+                {
+                    "task_id": "task_4",
+                    "task_name": "报告生成",
+                    "agent_type": "report"
+                }
+            ],
+            "quality_checkpoints": ["信息验证", "逻辑检查", "最终审查"],
+            "estimated_complexity": 0.5,
+            "timestamp": datetime.now().isoformat()
+        }
     
     async def _execute_task_plan(self, task_plan: Dict[str, Any], session_id: str) -> Dict[str, Any]:
-        """执行任务计划"""
+        """执行任务计划 - 增强版本，支持事件驱动协作"""
         logger.info(f"开始执行任务计划: {session_id}")
         
         execution_results = {
             "session_id": session_id,
             "agent_results": {},
             "execution_log": [],
+            "reasoning_chain": [],
             "timestamp": datetime.now().isoformat()
         }
         
-                # 按顺序执行Agent任务
-        for agent_name in task_plan["execution_order"]:
+        # 记录执行开始推理步骤
+        execution_start_step = ReasoningStep(
+            agent_id=self.agent_id,
+            step_type="execution",
+            description="开始执行任务计划",
+            input_data={"plan": task_plan.get("subtasks", [])},
+            reasoning_text=f"开始按计划执行{len(task_plan['execution_order'])}个Agent任务"
+        )
+        await self.blackboard.record_reasoning_step(execution_start_step)
+        
+        # 按顺序执行Agent任务，支持并行处理
+        for i, agent_name in enumerate(task_plan["execution_order"]):
             try:
-                logger.info(f"调用 {agent_name} Agent...")
+                logger.info(f"调用 {agent_name} Agent (步骤 {i+1}/{len(task_plan['execution_order'])})...")
+                
+                # 记录Agent调用决策
+                agent_call_step = ReasoningStep(
+                    agent_id=self.agent_id,
+                    step_type="decision",
+                    description=f"决定调用{agent_name} Agent",
+                    input_data={"agent": agent_name, "step": i+1},
+                    reasoning_text=f"根据任务计划，现在需要调用{agent_name} Agent来处理相关任务",
+                    confidence=0.8
+                )
+                await self.blackboard.record_reasoning_step(agent_call_step)
+                
+                # 获取对应的子任务信息
+                current_subtask = self._get_subtask_for_agent(task_plan, agent_name)
                 
                 # 发布Agent任务事件
                 await self.blackboard.publish_event(BlackboardEvent(
                     event_type=EventType.TASK_ASSIGNED,
                     agent_id=self.agent_id,
                     target_agent=agent_name,
+                    session_id=session_id,
                     data={
-                        "session_id": session_id,
                         "task_type": agent_name,
-                        "user_input": task_plan["user_input"]
+                        "user_input": task_plan["user_input"],
+                        "subtask_info": current_subtask,
+                        "previous_results": execution_results.get("agent_results", {}),
+                        "step_number": i+1,
+                        "total_steps": len(task_plan["execution_order"])
                     }
                 ))
                 
@@ -179,30 +407,133 @@ class MainAgent(BaseAgent):
                     agent_name, 
                     task_plan["user_input"], 
                     execution_results.get("agent_results", {}),
-                    session_id
+                    session_id,
+                    current_subtask
                 )
+                
+                # 记录Agent完成步骤
+                agent_completion_step = ReasoningStep(
+                    agent_id=self.agent_id,
+                    step_type="validation",
+                    description=f"{agent_name} Agent任务完成",
+                    input_data={"agent": agent_name},
+                    output_data={"result_summary": str(agent_result)[:200] + "..."},
+                    reasoning_text=f"{agent_name} Agent成功完成任务，产出了相关结果",
+                    confidence=0.9
+                )
+                await self.blackboard.record_reasoning_step(agent_completion_step)
                 
                 execution_results["agent_results"][agent_name] = agent_result
                 execution_results["execution_log"].append({
                     "agent": agent_name,
                     "status": "completed",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
+                    "subtask": current_subtask.get("task_name", "") if current_subtask else ""
                 })
                 
+                # 发布Agent完成事件
+                await self.blackboard.publish_event(BlackboardEvent(
+                    event_type=EventType.TASK_COMPLETED,
+                    agent_id=agent_name,
+                    session_id=session_id,
+                    data={
+                        "result": agent_result,
+                        "completion_time": datetime.now().isoformat(),
+                        "step_completed": i+1
+                    }
+                ))
+                
                 logger.info(f"{agent_name} Agent处理完成")
+                
+                # 检查质量控制点
+                if i+1 in [len(task_plan["execution_order"])//2, len(task_plan["execution_order"])]:
+                    await self._perform_quality_check(execution_results, session_id, i+1)
 
             except Exception as e:
                 logger.error(f"{agent_name} Agent处理失败: {e}")
+                
+                # 记录错误推理步骤
+                error_step = ReasoningStep(
+                    agent_id=self.agent_id,
+                    step_type="error",
+                    description=f"{agent_name} Agent执行失败",
+                    input_data={"agent": agent_name, "error": str(e)},
+                    reasoning_text=f"{agent_name} Agent执行过程中发生错误: {str(e)}",
+                    confidence=0.0
+                )
+                await self.blackboard.record_reasoning_step(error_step)
+                
                 execution_results["execution_log"].append({
                     "agent": agent_name,
                     "status": "error",
                     "error": str(e),
                     "timestamp": datetime.now().isoformat()
                 })
+                
+                # 发布错误事件
+                await self.blackboard.publish_event(BlackboardEvent(
+                    event_type=EventType.ERROR_OCCURRED,
+                    agent_id=self.agent_id,
+                    session_id=session_id,
+                    data={
+                        "failed_agent": agent_name,
+                        "error_message": str(e),
+                        "step_failed": i+1
+                    }
+                ))
+                
+                # 可选择是否继续执行其他Agent
+                continue
+        
+        # 记录执行完成推理步骤
+        execution_complete_step = ReasoningStep(
+            agent_id=self.agent_id,
+            step_type="completion",
+            description="任务计划执行完成",
+            input_data={"completed_agents": list(execution_results["agent_results"].keys())},
+            output_data=execution_results["execution_log"],
+            reasoning_text=f"成功完成{len(execution_results['agent_results'])}个Agent的任务执行",
+            confidence=0.95
+        )
+        await self.blackboard.record_reasoning_step(execution_complete_step)
         
         return execution_results
     
-    async def _process_agent_task_with_llm(self, agent_name: str, user_input: str, previous_results: Dict, session_id: str) -> Dict[str, Any]:
+    def _get_subtask_for_agent(self, task_plan: Dict[str, Any], agent_name: str) -> Optional[Dict[str, Any]]:
+        """获取特定Agent对应的子任务信息"""
+        subtasks = task_plan.get("subtasks", [])
+        for subtask in subtasks:
+            if subtask.get("agent_type") == agent_name:
+                return subtask
+        return None
+    
+    async def _perform_quality_check(self, execution_results: Dict[str, Any], session_id: str, step_number: int):
+        """执行质量控制检查"""
+        logger.info(f"执行质量控制检查 - 步骤 {step_number}")
+        
+        # 记录质量检查推理步骤
+        quality_check_step = ReasoningStep(
+            agent_id=self.agent_id,
+            step_type="validation",
+            description=f"质量控制检查 - 步骤 {step_number}",
+            input_data={"completed_agents": list(execution_results["agent_results"].keys())},
+            reasoning_text=f"在第{step_number}步执行质量控制检查，确保输出质量"
+        )
+        await self.blackboard.record_reasoning_step(quality_check_step)
+        
+        # 发布质量检查事件
+        await self.blackboard.publish_event(BlackboardEvent(
+            event_type=EventType.QUALITY_CHECK,
+            agent_id=self.agent_id,
+            session_id=session_id,
+            data={
+                "checkpoint": step_number,
+                "completed_results": execution_results["agent_results"],
+                "check_type": "intermediate" if step_number < 4 else "final"
+            }
+        ))
+    
+    async def _process_agent_task_with_llm(self, agent_name: str, user_input: str, previous_results: Dict, session_id: str, current_subtask: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """使用LLM处理Agent任务（在专门Agent不可用时的替代方案）"""
         
         agent_prompts = {

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
 from enum import Enum
 from dataclasses import dataclass, field
-from loguru import logger
+from loguru import logger # type: ignore
 
 
 class EventType(Enum):
@@ -20,26 +20,109 @@ class EventType(Enum):
     TASK_ASSIGNED = "task_assigned"
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"
+    TASK_CREATED = "task_created"
+    
+    # 主Agent协调事件
+    PROBLEM_PARSED = "problem_parsed"
+    SUBTASK_CREATED = "subtask_created"
+    PLAN_UPDATED = "plan_updated"
+    FINAL_INTEGRATION = "final_integration"
+    
+    # 信息获取Agent事件
+    LITERATURE_SEARCH_REQUEST = "literature_search_request"
+    LITERATURE_SEARCH_COMPLETED = "literature_search_completed"
+    INFORMATION_UPDATE = "information_update"
+    KNOWLEDGE_GRAPH_CREATED = "knowledge_graph_created"
+    RAG_QUERY_PROCESSED = "rag_query_processed"
+    
+    # 验证Agent事件
+    VERIFICATION_REQUEST = "verification_request"
+    VERIFICATION_REPORT = "verification_report"
+    CONSISTENCY_CHECK = "consistency_check"
+    CONFLICT_WARNING = "conflict_warning"
+    FEASIBILITY_CHECK = "feasibility_check"
+    
+    # 批判Agent事件
+    CRITIQUE_REQUEST = "critique_request"
+    CRITIQUE_FEEDBACK = "critique_feedback"
+    QUALITY_ASSESSMENT = "quality_assessment"
+    LOGIC_REVIEW = "logic_review"
+    INNOVATION_ASSESSMENT = "innovation_assessment"
+    
+    # 实验设计Agent事件
+    DESIGN_REQUEST = "design_request"
+    EXPERIMENT_PLAN = "experiment_plan"
+    EXPERIMENT_DRAFT_CREATED = "experiment_draft_created"
+    SAFETY_ASSESSMENT = "safety_assessment"
+    PROTOCOL_VALIDATION = "protocol_validation"
+    
+    # 建模Agent事件
+    MODEL_REQUEST = "model_request"
+    MODEL_RESULT = "model_result"
+    SIMULATION_COMPLETED = "simulation_completed"
+    PARAMETER_OPTIMIZATION = "parameter_optimization"
+    
+    # 评估Agent事件
+    EVALUATION_REQUEST = "evaluation_request"
+    PERFORMANCE_REPORT = "performance_report"
+    QUALITY_METRICS = "quality_metrics"
+    AGENT_PERFORMANCE_UPDATE = "agent_performance_update"
+    
+    # 报告生成Agent事件
+    REPORT_REQUEST = "report_request"
+    REPORT_GENERATED = "report_generated"
+    DOCUMENT_CREATED = "document_created"
+    
+    # 方案相关事件
+    SOLUTION_DRAFT_CREATED = "solution_draft_created"
+    SOLUTION_VALIDATED = "solution_validated"
+    SOLUTION_CRITIQUED = "solution_critiqued"
+    SOLUTION_FINALIZED = "solution_finalized"
     
     # Agent间通信
     AGENT_MESSAGE = "agent_message"
     AGENT_REQUEST = "agent_request"
     AGENT_RESPONSE = "agent_response"
+    COLLABORATION_EVENT = "collaboration_event"
     
     # 数据更新
     DATA_UPDATED = "data_updated"
-    INFORMATION_UPDATE = "information_update"
-    MODEL_RESULT = "model_result"
+    KNOWLEDGE_UPDATED = "knowledge_updated"
+    CONTEXT_UPDATED = "context_updated"
     
     # 质量控制
-    VERIFICATION_REPORT = "verification_report"
-    CRITIQUE_FEEDBACK = "critique_feedback"
     QUALITY_CHECK = "quality_check"
+    REVISION_REQUIRED = "revision_required"
+    IMPROVEMENT_SUGGESTION = "improvement_suggestion"
+    
+    # 推理链记录
+    REASONING_STEP = "reasoning_step"
+    DECISION_MADE = "decision_made"
+    INFERENCE_CHAIN = "inference_chain"
+    THOUGHT_PROCESS = "thought_process"
     
     # 系统事件
     SYSTEM_STATUS = "system_status"
     ERROR_OCCURRED = "error_occurred"
     WARNING_ISSUED = "warning_issued"
+    RESOURCE_ALLOCATED = "resource_allocated"
+    SESSION_STARTED = "session_started"
+    SESSION_ENDED = "session_ended"
+
+
+@dataclass
+class ReasoningStep:
+    """推理步骤数据结构"""
+    step_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    agent_id: str = ""
+    step_type: str = ""  # analysis, inference, decision, validation
+    description: str = ""
+    input_data: Dict[str, Any] = field(default_factory=dict)
+    output_data: Dict[str, Any] = field(default_factory=dict)
+    reasoning_text: str = ""
+    confidence: float = 0.0
+    timestamp: datetime = field(default_factory=datetime.now)
+    parent_step_id: Optional[str] = None
 
 
 @dataclass
@@ -53,6 +136,9 @@ class BlackboardEvent:
     timestamp: datetime = field(default_factory=datetime.now)
     priority: int = 0  # 0-10, 越高越优先
     processed: bool = False
+    session_id: Optional[str] = None  # 会话关联
+    reasoning_step_id: Optional[str] = None  # 关联推理步骤
+    dependencies: List[str] = field(default_factory=list)  # 依赖的事件ID
 
 
 class Blackboard:
@@ -65,6 +151,16 @@ class Blackboard:
         self.event_history: List[BlackboardEvent] = []
         self.max_history = 1000
         self._lock = asyncio.Lock()
+        
+        # 推理链管理
+        self.reasoning_chains: Dict[str, List[ReasoningStep]] = {}  # session_id -> reasoning steps
+        self.reasoning_steps: Dict[str, ReasoningStep] = {}  # step_id -> step
+        
+        # 会话管理
+        self.active_sessions: Dict[str, Dict[str, Any]] = {}
+        
+        # 任务分解记录
+        self.task_decompositions: Dict[str, Dict[str, Any]] = {}  # session_id -> decomposition data
         
         logger.info("🔲 黑板系统初始化完成")
     
@@ -394,6 +490,98 @@ class Blackboard:
                 "error": str(e),
                 "check_time": datetime.now().isoformat()
             }
+
+    async def record_reasoning_step(self, step: ReasoningStep) -> str:
+        """记录推理步骤"""
+        async with self._lock:
+            self.reasoning_steps[step.step_id] = step
+            
+            # 添加到会话的推理链
+            if step.agent_id:
+                session_id = getattr(step, 'session_id', 'default')
+                if session_id not in self.reasoning_chains:
+                    self.reasoning_chains[session_id] = []
+                self.reasoning_chains[session_id].append(step)
+            
+            # 发布推理步骤事件
+            await self.publish_event(BlackboardEvent(
+                event_type=EventType.REASONING_STEP,
+                agent_id=step.agent_id,
+                data={
+                    "step_id": step.step_id,
+                    "step_type": step.step_type,
+                    "description": step.description,
+                    "confidence": step.confidence
+                },
+                reasoning_step_id=step.step_id
+            ))
+            
+            logger.debug(f"🧠 记录推理步骤: {step.step_type} by {step.agent_id}")
+            return step.step_id
+    
+    async def get_reasoning_chain(self, session_id: str) -> List[ReasoningStep]:
+        """获取会话的推理链"""
+        async with self._lock:
+            return self.reasoning_chains.get(session_id, [])
+    
+    async def get_reasoning_step(self, step_id: str) -> Optional[ReasoningStep]:
+        """获取特定推理步骤"""
+        async with self._lock:
+            return self.reasoning_steps.get(step_id)
+    
+    async def record_task_decomposition(self, session_id: str, decomposition_data: Dict[str, Any]):
+        """记录任务分解"""
+        async with self._lock:
+            self.task_decompositions[session_id] = {
+                **decomposition_data,
+                "timestamp": datetime.now(),
+                "session_id": session_id
+            }
+            
+            # 发布任务分解事件
+            await self.publish_event(BlackboardEvent(
+                event_type=EventType.SUBTASK_CREATED,
+                agent_id="main_agent",
+                session_id=session_id,
+                data=decomposition_data
+            ))
+            
+            logger.debug(f"📋 记录任务分解: {session_id}")
+    
+    async def get_task_decomposition(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """获取任务分解信息"""
+        async with self._lock:
+            return self.task_decompositions.get(session_id)
+    
+    async def create_inference_chain(self, session_id: str, agent_id: str, 
+                                   chain_type: str, input_data: Dict[str, Any]) -> str:
+        """创建推理链"""
+        chain_id = f"chain_{uuid.uuid4().hex[:8]}"
+        
+        # 创建起始推理步骤
+        initial_step = ReasoningStep(
+            agent_id=agent_id,
+            step_type="chain_start",
+            description=f"开始{chain_type}推理链",
+            input_data=input_data,
+            confidence=1.0
+        )
+        
+        await self.record_reasoning_step(initial_step)
+        
+        # 发布推理链创建事件
+        await self.publish_event(BlackboardEvent(
+            event_type=EventType.INFERENCE_CHAIN,
+            agent_id=agent_id,
+            session_id=session_id,
+            data={
+                "chain_id": chain_id,
+                "chain_type": chain_type,
+                "initial_step_id": initial_step.step_id
+            }
+        ))
+        
+        return chain_id
 
 
 # 全局黑板实例

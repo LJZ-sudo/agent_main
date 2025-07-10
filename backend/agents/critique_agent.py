@@ -9,7 +9,7 @@ import json
 import uuid
 
 from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType
+from core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
 
 
 @dataclass
@@ -46,7 +46,8 @@ class CritiqueAgent(LLMBaseAgent):
                 EventType.SOLUTION_DRAFT_CREATED,
                 EventType.EXPERIMENT_PLAN,
                 EventType.VERIFICATION_REPORT,
-                EventType.CONFLICT_WARNING
+                EventType.CONFLICT_WARNING,
+                EventType.TASK_ASSIGNED
             ],
             max_concurrent_tasks=3
         )
@@ -328,7 +329,20 @@ class CritiqueAgent(LLMBaseAgent):
     async def _process_event_impl(self, event: BlackboardEvent) -> Any:
         """处理批判相关事件"""
         try:
-            if event.event_type == EventType.SOLUTION_DRAFT_CREATED:
+            # 记录事件处理推理步骤
+            event_step = ReasoningStep(
+                agent_id=self.agent_id,
+                step_type="event_processing",
+                description=f"处理{event.event_type.value}事件",
+                input_data={"event_type": event.event_type.value, "source_agent": event.agent_id},
+                reasoning_text=f"批判Agent收到{event.event_type.value}事件，开始进行批判性分析"
+            )
+            await self.blackboard.record_reasoning_step(event_step)
+            
+            if event.event_type == EventType.TASK_ASSIGNED:
+                if event.target_agent == self.agent_id or event.data.get("task_type") == "critique":
+                    return await self._handle_critique_task(event)
+            elif event.event_type == EventType.SOLUTION_DRAFT_CREATED:
                 return await self._critique_solution_draft(event.data)
             elif event.event_type == EventType.EXPERIMENT_PLAN:
                 return await self._critique_experiment_plan(event.data)
@@ -341,6 +355,59 @@ class CritiqueAgent(LLMBaseAgent):
                 
         except Exception as e:
             self.logger.error(f"批判处理失败: {e}")
+            await self._publish_critique_error(event, str(e))
+
+    async def _handle_critique_task(self, event: BlackboardEvent):
+        """处理批判任务分配"""
+        task_data = event.data
+        session_id = event.session_id or "default"
+        
+        self.logger.info(f"开始批判分析任务: {task_data.get('user_input', '')[:50]}...")
+        
+        # 记录任务开始推理步骤
+        task_start_step = ReasoningStep(
+            agent_id=self.agent_id,
+            step_type="task_start",
+            description="开始批判分析任务",
+            input_data=task_data,
+            reasoning_text="收到批判任务，开始对前期Agent结果进行批判性分析"
+        )
+        await self.blackboard.record_reasoning_step(task_start_step)
+        
+        try:
+            # 执行全面批判分析
+            critique_result = await self._enhanced_critical_analysis(task_data, session_id)
+            
+            # 发布批判结果
+            await self.blackboard.publish_event(BlackboardEvent(
+                event_type=EventType.CRITIQUE_FEEDBACK,
+                agent_id=self.agent_id,
+                session_id=session_id,
+                data={
+                    "critique_result": critique_result,
+                    "task_completed": True,
+                    "timestamp": datetime.now().isoformat()
+                }
+            ))
+            
+            # 记录任务完成推理步骤
+            completion_step = ReasoningStep(
+                agent_id=self.agent_id,
+                step_type="completion",
+                description="批判分析任务完成",
+                input_data=task_data,
+                output_data={"overall_score": critique_result.get("overall_score", 0)},
+                reasoning_text="完成了全面的批判性分析，识别了优势、问题和改进建议",
+                confidence=0.85
+            )
+            await self.blackboard.record_reasoning_step(completion_step)
+            
+            self.logger.info(f"批判分析完成，总评分: {critique_result.get('overall_score', 0)}")
+            
+            return critique_result
+            
+        except Exception as e:
+            self.logger.error(f"批判任务失败: {e}")
             await self._publish_critique_error(event, str(e))
     
     async def _critique_solution_draft(self, data: Dict[str, Any]) -> None:
