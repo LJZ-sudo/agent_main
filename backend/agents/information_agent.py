@@ -15,6 +15,7 @@ import numpy as np
 from backend.core.base_agent import BaseAgent
 from backend.core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
 from backend.utils.literature_search import LiteratureSearchEngine, LiteratureSearchResult
+from loguru import logger
 
 
 @dataclass
@@ -101,8 +102,15 @@ class InformationAgent(BaseAgent):
         self.literature_cache: Dict[str, LiteratureDocument] = {}
         self.topic_cache: Dict[str, ResearchTopic] = {}
         self.knowledge_graphs: Dict[str, KnowledgeGraph] = {}
-        self.search_engine = LiteratureSearchEngine()
+        
+        # 初始化文献搜索引擎，使用环境配置
+        from backend.config_env import get_env_config, set_env_variables
+        # 确保环境变量已设置
+        env_config = set_env_variables()
+        self.search_engine = LiteratureSearchEngine(config=env_config)
         self.search_databases = ["PubMed", "arXiv", "CrossRef", "GoogleScholar"]
+        
+        logger.info(f"🔧 文献搜索引擎初始化完成，可用APIs: {env_config.get_available_apis()}")
         
         # 设置Agent类型
         self.agent_type = "information_gatherer"
@@ -834,46 +842,81 @@ class InformationAgent(BaseAgent):
         """单个数据库检索（真实API）"""
         limit = 20
         try:
+            # 创建SearchQuery对象
+            from backend.utils.literature_search import SearchQuery
+            query = SearchQuery(keywords=[keyword], max_results=limit)
+            
             if database == "PubMed":
-                results = self.search_engine.search_pubmed(keyword, limit)
+                logger.info(f"🔍 搜索PubMed: {keyword}")
+                results = await self.search_engine.search_pubmed(query)
             elif database == "arXiv":
-                results = self.search_engine.search_arxiv(keyword, limit)
+                logger.info(f"🔍 搜索arXiv: {keyword}")
+                results = await self.search_engine.search_arxiv(query)
             elif database == "CrossRef":
-                results = self.search_engine.search_crossref(keyword, limit)
+                logger.info(f"🔍 搜索CrossRef: {keyword}")
+                results = await self.search_engine.search_crossref(query)
             elif database == "GoogleScholar":
+                logger.info(f"🔍 搜索GoogleScholar: {keyword}")
                 try:
-                    results = self.search_engine.search_serpapi_google_scholar(keyword, limit)
+                    # 优先使用SearchApi，回退到SerpApi
+                    results = await self.search_engine.search_searchapi_google_scholar(query)
+                    if not results:
+                        results = await self.search_engine.search_serpapi_google_scholar(query)
                 except Exception as e:
-                    self.logger.warning(f"GoogleScholar API异常: {e}")
+                    logger.error(f"GoogleScholar API异常: {e}")
                     results = []
             else:
-                self.logger.warning(f"未知数据库: {database}")
+                logger.warning(f"未知数据库: {database}")
                 results = []
+                
+            if not results:
+                logger.info(f"📭 {database} 未找到关键词 '{keyword}' 的相关文献")
+            else:
+                logger.info(f"✅ {database} 检索成功: 找到 {len(results)} 篇文献")
+                
         except Exception as e:
-            self.logger.warning(f"{database} 检索异常: {e}")
+            logger.error(f"{database} 检索失败: {e}")
             results = []
 
         # 转换为 LiteratureDocument
         docs = []
+        logger.info(f"🔄 开始转换 {len(results)} 条 {database} 检索结果...")
+        
         for i, item in enumerate(results):
-            doc = LiteratureDocument(
-                doc_id=f"doc_{database}_{keyword}_{i}",
-                title=item.title,
-                authors=item.authors,
-                journal=item.journal,
-                year=int(item.publication_date[:4]) if item.publication_date and item.publication_date[:4].isdigit() else 0,
-                abstract=item.abstract,
-                keywords=[keyword],
-                citation_count=item.citation_count,
-                journal_impact_factor=0.0,
-                relevance_score=0.0,
-                quality_score=0.0,
-                source_database=item.source_database,
-                doi=item.doi or "",
-                full_text=""
-            )
-            docs.append(doc)
-        self.logger.info(f"{database} 返回 {len(docs)} 条，高质量待评估")
+            try:
+                # 安全提取年份
+                year = 0
+                if hasattr(item, 'publication_date') and item.publication_date:
+                    year_str = str(item.publication_date)[:4]
+                    if year_str.isdigit():
+                        year = int(year_str)
+                
+                doc = LiteratureDocument(
+                    doc_id=f"doc_{database}_{keyword}_{i}",
+                    title=getattr(item, 'title', '') or '',
+                    authors=getattr(item, 'authors', []) or [],
+                    journal=getattr(item, 'journal', '') or '',
+                    year=year,
+                    abstract=getattr(item, 'abstract', '') or '',
+                    keywords=[keyword],
+                    citation_count=getattr(item, 'citation_count', 0) or 0,
+                    journal_impact_factor=0.0,
+                    relevance_score=0.0,
+                    quality_score=0.0,
+                    source_database=getattr(item, 'source_database', database) or database,
+                    doi=getattr(item, 'doi', '') or '',
+                    full_text=""
+                )
+                docs.append(doc)
+                logger.debug(f"✅ 转换文档 {i+1}: {doc.title[:50]}...")
+                
+            except Exception as e:
+                logger.error(f"❌ 转换第 {i+1} 条文档失败: {e}")
+                logger.error(f"   原始数据类型: {type(item)}")
+                logger.error(f"   原始数据: {str(item)[:200]}...")
+                continue
+        
+        logger.info(f"📚 {database} 成功转换 {len(docs)} 条文献文档")
         return docs
 
     async def _quality_assessment_and_filtering(self, documents: List[LiteratureDocument]) -> List[LiteratureDocument]:
