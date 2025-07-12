@@ -1,557 +1,535 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-报告生成Agent - 负责将各模块成果整合为结构化科研报告
-扮演AI团队中的"技术写作专家"角色
+报告Agent - 负责收集中间结果，生成总结报告
 """
+
 import uuid
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
 from datetime import datetime
-import json
+from typing import Dict, List, Any, Optional
+from loguru import logger
 
 from backend.core.base_agent import BaseAgent
-from backend.core.blackboard import Blackboard, BlackboardEvent, EventType
-
-
-@dataclass
-class ReportSection:
-    """报告章节数据结构"""
-    section_id: str
-    title: str
-    content: str
-    level: int  # 章节级别 1,2,3...
-    order: int  # 排序
-    metadata: Dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
-
-
-@dataclass
-class ReportTemplate:
-    """报告模板数据结构"""
-    template_id: str
-    name: str
-    description: str
-    sections: List[str]  # 章节标题列表
-    formatting_rules: Dict[str, Any]
+from backend.core.blackboard import EventType, BlackboardEvent
 
 
 class ReportAgent(BaseAgent):
-    """
-    报告生成Agent - 结构化科研报告生成专家
+    """报告Agent - 收集各Agent的分析结果，生成综合研究报告"""
 
-    职责:
-    - 整合各Agent产出的信息
-    - 生成结构化的科研报告
-    - 处理格式规范和引用标准
-    - 确保逻辑连贯性和可读性
-    """
+    def __init__(self, blackboard):
+        super().__init__("report_agent", blackboard)
+        self.agent_type = "report"
+        self.specializations = [
+            "报告撰写",
+            "结果整理",
+            "可视化",
+            "总结归纳",
+            "文档生成"
+        ]
 
-    def __init__(self, blackboard: Blackboard, llm_client=None):
-        config = AgentConfig(
-            name="ReportAgent",
-            agent_type="reporter",
-            description="报告生成Agent - 技术写作专家",
-            subscribed_events=[
-                EventType.TASK_COMPLETED,
-                EventType.VERIFICATION_REPORT,
-                EventType.CRITIQUE_FEEDBACK,
-                EventType.EVALUATION_RESULT,
-                EventType.MODEL_RESULT
-            ],
-            max_concurrent_tasks=2
-        )
-        super().__init__(config, blackboard, llm_client)
-
-        # 报告模板和配置
-        self.report_templates: Dict[str, ReportTemplate] = {}
-        self.current_reports: Dict[str, Dict[str, Any]] = {}
-        self.formatting_rules = {
-            "citation_style": "IEEE",
-            "max_section_length": 2000,
-            "language": "zh-CN",
-            "include_figures": True,
-            "include_tables": True
-        }
-
-    async def _load_prompt_templates(self):
-        """加载报告生成模板"""
-        self.prompt_templates = {
-            "research_report": """
-系统：你是专业的科研报告撰写专家，请根据提供的研究成果生成一份结构化的研究报告。
-
-研究信息：
-{research_data}
-
-**重要要求**：
-1. 必须基于实际提供的研究数据生成具体内容，严禁使用占位符如"发现A"、"主题A"等
-2. 如果研究问题涉及具体领域（如质子导体、催化剂等），必须生成该领域的专业内容
-3. 所有章节内容必须与用户的具体研究问题相关
-4. 引用和发现必须基于实际的研究背景
-5. 避免模糊的描述，提供具体的科学内容
-
-请按照以下结构生成报告（JSON格式）：
-{{
-    "title": "基于实际研究问题的具体标题",
-    "research_question": "从研究数据中提取的用户原始问题",
-    "executive_summary": {{
-        "key_findings": ["具体的科学发现1", "具体的科学发现2", "具体的科学发现3"],
-        "innovations": ["具体的创新点1", "具体的创新点2"],
-        "recommendations": ["具体的建议1", "具体的建议2"],
-        "impact": "基于实际研究内容的预期影响描述"
-    }},
-    "introduction": {{
-        "background": "基于用户问题的具体研究背景",
-        "motivation": "针对具体问题的研究动机",
-        "objectives": ["具体的研究目标1", "具体的研究目标2"],
-        "scope": "明确的研究范围和边界"
-    }},
-    "literature_review": {{
-        "current_state": "该具体领域的当前研究现状",
-        "key_references": [
-            {{
-                "title": "相关的具体文献标题",
-                "authors": ["具体作者1", "具体作者2"],
-                "year": 2024,
-                "contribution": "该文献的具体贡献"
-            }}
-        ],
-        "research_gap": "基于实际分析的研究空白",
-        "our_approach": "我们针对具体问题的方法"
-    }},
-    "methodology": {{
-        "research_design": "针对具体问题的研究设计",
-        "methods": ["具体方法1", "具体方法2"],
-        "data_collection": "具体的数据收集方式",
-        "analysis_approach": "具体的分析方法"
-    }},
-    "results": {{
-        "main_findings": [
-            {{
-                "finding": "具体的研究发现描述",
-                "evidence": "支撑该发现的具体证据",
-                "significance": "该发现在具体领域的重要性说明"
-            }}
-        ],
-        "data_visualization": [
-            {{
-                "type": "图表类型",
-                "title": "具体的图表标题",
-                "description": "图表的具体说明",
-                "key_insights": ["具体洞察1", "具体洞察2"]
-            }}
-        ],
-        "statistical_analysis": {{
-            "key_metrics": "具体的关键指标",
-            "confidence_levels": "具体的置信水平",
-            "correlations": "发现的具体相关性"
-        }}
-    }},
-    "discussion": {{
-        "interpretation": "基于具体结果的解释",
-        "implications": ["具体的理论意义", "具体的实践意义"],
-        "limitations": ["具体的局限性1", "具体的局限性2"],
-        "future_directions": ["具体的未来方向1", "具体的未来方向2"]
-    }},
-    "conclusion": {{
-        "summary": "基于实际研究的总结",
-        "contributions": ["具体贡献1", "具体贡献2"],
-        "practical_applications": ["具体应用1", "具体应用2"],
-        "final_remarks": "针对研究问题的结语"
-    }},
-    "references": [
-        {{
-            "id": "ref1",
-            "citation": "具体的完整引用格式"
-        }}
-    ],
-    "appendices": [
-        {{
-            "title": "具体的附录标题",
-            "content": "相关的附录内容"
-        }}
-    ]
-}}
-
-**再次强调**：绝对不要使用"发现A"、"主题A"、"建议1"这样的占位符，所有内容必须基于实际研究数据生成具体的科学内容。
-""",
-
-            "markdown_converter": """
-系统：将JSON格式的研究报告转换为美观的Markdown格式。
-
-JSON报告：
-{json_report}
-
-转换要求：
-1. 使用适当的Markdown标记（标题、列表、表格、代码块等）
-2. 保持层次结构清晰
-3. 突出重要信息（加粗、斜体等）
-4. 格式化引用和参考文献
-5. 确保可读性和美观性
-6. 保持所有具体的科学内容，不要转换为占位符
-
-请生成格式化的Markdown报告，包括：
-- 多级标题结构
-- 项目符号和编号列表
-- 表格（如适用）
-- 引用块
-- 代码块（如适用）
-- 图表占位符和说明
-""",
-
-            "section_content": """
-系统：为研究报告的特定章节生成具体内容。
-
-章节标题：{section_title}
-章节描述：{section_description}
-相关数据：{relevant_data}
-上下文：{context}
-最大长度：{max_length}字符
-
-**重要要求**：
-1. 内容必须具体且与章节标题相关
-2. 基于提供的相关数据生成真实内容
-3. 避免使用占位符或通用描述
-4. 如果涉及科学领域，使用专业术语和概念
-5. 确保内容的科学准确性和专业性
-
-请生成该章节的具体内容：
-""",
-
-            "html_converter": """
-系统：将研究报告转换为专业的HTML格式，包含样式。
-
-报告内容：
-{report_content}
-
-HTML要求：
-1. 使用语义化HTML5标签
-2. 包含内联CSS样式
-3. 响应式设计考虑
-4. 专业的配色方案
-5. 清晰的排版布局
-6. 保持所有具体内容不变
-
-请生成包含以下特性的HTML：
-- 导航目录
-- 章节编号
-- 图表容器
-- 打印友好样式
-- 可折叠/展开的章节
-""",
-
-            "executive_summary_generator": """
-系统：基于完整研究报告生成执行摘要。
-
-完整报告：
-{full_report}
-
-摘要要求：
-1. 控制在1-2页内容
-2. 突出最重要的发现
-3. 强调实际价值和影响
-4. 提供关键数据支撑
-5. 明确的行动建议
-6. 基于实际研究内容，避免占位符
-
-请生成包含以下部分的执行摘要：
-{{
-    "overview": "基于实际研究的项目概述（2-3句话）",
-    "key_findings": ["具体发现1（含实际数据）", "具体发现2", "具体发现3"],
-    "business_impact": "具体的商业/学术影响",
-    "recommendations": [
-        {{
-            "action": "具体的建议行动",
-            "rationale": "基于研究的理由",
-            "timeline": "现实的时间框架"
-        }}
-    ],
-    "next_steps": ["具体的下一步1", "具体的下一步2"],
-    "conclusion": "基于实际研究的结论（1-2句话）"
-}}
-"""
-        }
-
-    async def _process_event_impl(self, event: BlackboardEvent):
-        """处理黑板事件的具体实现"""
+    async def _process_task_impl(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """处理报告生成任务"""
         try:
-            if event.event_type == EventType.TASK_COMPLETED:
-                await self._collect_task_results(event)
-            elif event.event_type == EventType.VERIFICATION_REPORT:
-                await self._integrate_verification(event)
-            elif event.event_type == EventType.CRITIQUE_FEEDBACK:
-                await self._integrate_critique(event)
-            elif event.event_type == EventType.EVALUATION_RESULT:
-                await self._integrate_evaluation(event)
-            elif event.event_type == EventType.MODEL_RESULT:
-                await self._integrate_model_results(event)
-
+            task_type = task_data.get("task_type", "comprehensive_report")
+            session_id = task_data.get("session_id", "")
+            
+            logger.info(f"📝 ReportAgent开始处理报告生成任务: {task_type}")
+            
+            if task_type == "summary_report":
+                return await self._generate_summary_report(task_data)
+            elif task_type == "technical_report":
+                return await self._generate_technical_report(task_data)
+            elif task_type == "executive_summary":
+                return await self._generate_executive_summary(task_data)
+            else:
+                # 默认综合报告
+                return await self._generate_comprehensive_report(task_data)
+                
         except Exception as e:
-            self.logger.error(f"处理事件失败: {e}")
-
-    async def _collect_task_results(self, event: BlackboardEvent):
-        """收集任务完成结果"""
-        task_data = event.data
-        task_id = task_data.get("task_id")
-        
-        if not task_id:
-            return
-
-        # 获取任务相关的所有信息
-        report_id = task_data.get("report_id", "default")
-        
-        if report_id not in self.current_reports:
-            self.current_reports[report_id] = {
-                "sections": {},
-                "metadata": {},
-                "status": "collecting",
-                "created_at": datetime.now()
-            }
-
-        # 存储任务结果
-        self.current_reports[report_id]["sections"][task_id] = {
-            "content": task_data.get("result", ""),
-            "source": event.source_agent,
-            "timestamp": event.timestamp
-        }
-
-        self.logger.info(f"收集任务结果: {task_id} from {event.source_agent}")
-
-    async def generate_report(self, report_id: str, template_name: str = "standard") -> str:
-        """生成研究报告"""
-        self.logger.info(f"开始生成报告: {report_id}, 模板: {template_name}")
-        
-        try:
-            # 获取报告数据
-            report_data = self.current_reports.get(report_id, {})
-            if not report_data:
-                self.logger.warning(f"未找到报告数据: {report_id}")
-                return ""
-            
-            # 生成结构化报告
-            structure = await self._generate_report_structure(report_data)
-            
-            # 生成各部分内容
-            sections_content = {}
-            for section in structure.get("sections", []):
-                content = await self._generate_section_content(section, report_data)
-                sections_content[section["id"]] = content
-            
-            # 整合最终报告
-            final_report = await self._integrate_final_report(sections_content, report_data)
-            
-            # 生成不同格式的报告
-            json_report = await self._generate_json_report(report_data)
-            markdown_report = await self._convert_to_markdown(json_report)
-            html_report = await self._convert_to_html(markdown_report)
-            executive_summary = await self._generate_executive_summary(json_report)
-            
-            # 存储不同格式的报告
-            await self._store_reports(report_id, {
-                "json": json_report,
-                "markdown": markdown_report,
-                "html": html_report,
-                "executive_summary": executive_summary,
-                "full_text": final_report
-            })
-            
-            # 发布报告生成完成事件
-            await self._publish_report_generated(report_id, final_report)
-            
-            return final_report
-            
-        except Exception as e:
-            self.logger.error(f"报告生成失败: {e}")
+            logger.error(f"❌ ReportAgent处理失败: {e}")
             raise
 
-    async def _generate_report_structure(self, report_data: Dict) -> Dict:
-        """生成报告结构"""
-        collected_info = self._extract_information(report_data)
+    async def _generate_comprehensive_report(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成综合研究报告"""
+        query = task_data.get("query", "")
+        session_id = task_data.get("session_id", "")
         
-        prompt = self.format_prompt(
-            "research_report",
-            research_data=json.dumps(collected_info, ensure_ascii=False, indent=2)
-        )
+        # 收集所有前序Agent的结果
+        agent_results = await self._collect_all_agent_results(session_id)
         
-        response = await self.call_llm(
-            prompt,
-            temperature=0.3,
-            max_tokens=8000,
-            response_format="json"
-        )
-        
-        return json.loads(response)
+        # 构建报告生成提示词
+        report_prompt = f"""作为专业的科研报告撰写专家，请基于以下多Agent协作分析结果，生成一份完整的研究报告：
 
-    async def _generate_section_content(self, section: Dict, report_data: Dict) -> str:
-        """生成章节内容"""
-        relevant_data = self._extract_relevant_data(section, report_data)
-        
-        prompt = self.format_prompt(
-            "section_content",
-            section_title=section["title"],
-            section_description=section.get("description", ""),
-            relevant_data=json.dumps(relevant_data, ensure_ascii=False),
-            context=json.dumps(report_data.get("metadata", {}), ensure_ascii=False),
-            max_length=self.formatting_rules["max_section_length"]
-        )
-        
-        return await self.call_llm(prompt)
+研究目标: {query}
 
-    async def _integrate_final_report(self, sections_content: Dict, report_data: Dict) -> str:
-        """整合最终报告"""
-        prompt = self.format_prompt(
-            "research_report",
-            research_data=json.dumps(sections_content, ensure_ascii=False, indent=2)
-        )
-        
-        response = await self.call_llm(
-            prompt,
-            temperature=0.3,
-            max_tokens=8000,
-            response_format="json"
-        )
-        
-        return json.loads(response)
+=== Agent分析结果 ===
 
-    def _extract_information(self, report_data: Dict) -> Dict:
-        """提取报告相关信息"""
-        info = {}
-        
-        # 从各个Agent的结果中提取信息
-        for section_id, section_data in report_data.get("sections", {}).items():
-            source = section_data.get("source", "")
-            content = section_data.get("content", "")
-            
-            if source not in info:
-                info[source] = []
-            info[source].append(content)
-        
-        return info
+信息收集Agent结果:
+{self._format_agent_result(agent_results.get('information_agent', {}))}
 
-    def _extract_relevant_data(self, section: Dict, report_data: Dict) -> Dict:
-        """提取章节相关数据"""
-        section_title = section["title"].lower()
-        relevant_data = {}
-        
-        # 根据章节标题匹配相关数据
-        if "方法" in section_title or "实验" in section_title:
-            relevant_data["experiment_data"] = report_data.get("model_results", [])
-        elif "结果" in section_title or "分析" in section_title:
-            relevant_data["results"] = report_data.get("evaluation", {})
-        elif "验证" in section_title:
-            relevant_data["verification"] = report_data.get("verification", [])
-        
-        return relevant_data
+验证Agent结果:
+{self._format_agent_result(agent_results.get('verification_agent', {}))}
 
-    async def _generate_json_report(self, report_data: Dict) -> Dict:
-        """生成JSON格式的结构化报告"""
-        prompt = self.format_prompt(
-            "research_report",
-            research_data=json.dumps(report_data, ensure_ascii=False, indent=2)
-        )
-        
-        response = await self.call_llm(
-            prompt,
-            temperature=0.3,
-            max_tokens=8000,
-            response_format="json"
-        )
-        
-        return json.loads(response)
+批判Agent结果:
+{self._format_agent_result(agent_results.get('critique_agent', {}))}
 
-    async def _convert_to_markdown(self, json_report: Dict) -> str:
-        """将JSON报告转换为Markdown格式"""
-        prompt = self.format_prompt(
-            "markdown_converter",
-            json_report=json.dumps(json_report, ensure_ascii=False, indent=2)
-        )
-        
-        markdown_content = await self.call_llm(
-            prompt,
-            temperature=0.2,
-            max_tokens=6000
-        )
-        
-        return markdown_content
+请生成一份结构完整的研究报告，包含以下部分：
 
-    async def _convert_to_html(self, markdown_content: str) -> str:
-        """将Markdown转换为HTML格式"""
-        # 首先使用markdown库转换基础HTML
-        import markdown
-        html_body = markdown.markdown(
-            markdown_content,
-            extensions=['extra', 'codehilite', 'toc', 'tables']
-        )
-        
-        # 然后使用LLM增强HTML样式
-        prompt = self.format_prompt(
-            "html_converter",
-            report_content=html_body
-        )
-        
-        enhanced_html = await self.call_llm(
-            prompt,
-            temperature=0.2,
-            max_tokens=8000
-        )
-        
-        return enhanced_html
+# 研究报告：{query}
 
-    async def _generate_executive_summary(self, json_report: Dict) -> Dict:
-        """生成执行摘要"""
-        prompt = self.format_prompt(
-            "executive_summary_generator",
-            full_report=json.dumps(json_report, ensure_ascii=False, indent=2)
-        )
-        
-        response = await self.call_llm(
-            prompt,
-            temperature=0.3,
-            max_tokens=2000,
-            response_format="json"
-        )
-        
-        return json.loads(response)
+## 1. 执行摘要
+- 研究目标概述
+- 主要发现总结
+- 关键结论
+- 建议概要
 
-    async def _store_reports(self, report_id: str, reports: Dict[str, Any]):
-        """存储不同格式的报告"""
-        for format_type, content in reports.items():
-            await self.blackboard.store_data(
-                f"report_{report_id}_{format_type}",
-                {
-                    "content": content,
-                    "format": format_type,
-                    "generated_at": datetime.now().isoformat(),
-                    "generator": self.config.name
-                }
+## 2. 研究背景与现状
+- 研究领域背景
+- 当前技术水平
+- 存在的问题和挑战
+- 研究的必要性
+
+## 3. 技术分析
+- 技术路线分析
+- 关键技术要点
+- 技术难点识别
+- 解决方案建议
+
+## 4. 可行性评估
+- 技术可行性分析
+- 资源需求评估
+- 时间进度预估
+- 风险因素识别
+
+## 5. 创新性分析
+- 主要创新点
+- 与现有技术的差异
+- 创新价值评估
+- 潜在影响分析
+
+## 6. 问题与挑战
+- 主要技术挑战
+- 实施风险
+- 资源限制
+- 外部制约因素
+
+## 7. 改进建议
+- 技术改进方向
+- 实施策略优化
+- 风险缓解措施
+- 资源配置建议
+
+## 8. 结论与展望
+- 总体结论
+- 实施建议
+- 未来发展方向
+- 预期成果
+
+请确保报告内容专业、全面、逻辑清晰，并基于实际的分析结果进行撰写。"""
+
+        try:
+            # 调用LLM生成报告
+            response = await self.llm_client.generate_text(
+                report_prompt,
+                temperature=0.3,
+                max_tokens=3000
             )
-        
-        # 存储报告元数据
-        await self.blackboard.store_data(
-            f"report_{report_id}_metadata",
-            {
-                "formats_available": list(reports.keys()),
-                "generated_at": datetime.now().isoformat(),
-                "report_id": report_id,
-                "status": "completed"
-            }
-        )
+            
+            if response.success:
+                report_content = response.content
+                
+                # 生成报告元数据
+                report_metadata = self._generate_report_metadata(agent_results, session_id)
+                
+                result = {
+                    "report_type": "comprehensive",
+                    "report_content": report_content,
+                    "report_metadata": report_metadata,
+                    "agent_contributions": self._summarize_agent_contributions(agent_results),
+                    "quality_indicators": self._calculate_quality_indicators(agent_results),
+                    "generated_at": datetime.now().isoformat(),
+                    "word_count": len(report_content.split()),
+                    "sections_count": report_content.count("##")
+                }
+                
+                # 发布报告生成完成事件
+                await self.blackboard.publish_event(BlackboardEvent(
+                    event_type=EventType.REPORT_GENERATED,
+                    agent_id=self.agent_id,
+                    session_id=session_id,
+                    data={
+                        "report_type": "comprehensive",
+                        "word_count": result["word_count"],
+                        "quality_score": result["quality_indicators"]["overall_quality"],
+                        "completion_status": "success"
+                    }
+                ))
+                
+                logger.info(f"✅ 综合报告生成完成，字数: {result['word_count']}")
+                return result
+                
+            else:
+                raise Exception(f"LLM报告生成失败: {response.error}")
+                
+        except Exception as e:
+            logger.error(f"综合报告生成失败: {e}")
+            # 返回默认报告
+            return self._generate_default_report(query, agent_results, session_id)
 
-    async def _publish_report_generated(self, report_id: str, report_content: str):
-        """发布报告生成完成事件"""
-        event = BlackboardEvent(
-            event_id=str(uuid.uuid4()),
-            event_type=EventType.REPORT_GENERATED,
-            source_agent=self.config.name,
-            data={
-                "report_id": report_id,
-                "content": report_content,
-                "word_count": len(report_content),
+    async def _generate_summary_report(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成摘要报告"""
+        query = task_data.get("query", "")
+        session_id = task_data.get("session_id", "")
+        
+        agent_results = await self._collect_all_agent_results(session_id)
+        
+        summary_prompt = f"""请为以下研究生成简洁的摘要报告：
+
+研究目标: {query}
+
+基于Agent分析结果，请生成包含以下要点的摘要：
+1. 研究目标 (1-2句)
+2. 主要发现 (3-4点)
+3. 可行性评估 (1-2句)
+4. 关键建议 (2-3点)
+5. 总体结论 (1-2句)
+
+要求：简洁明了，突出重点，总字数控制在300字以内。"""
+
+        try:
+            response = await self.llm_client.generate_text(summary_prompt, temperature=0.3, max_tokens=500)
+            
+            if response.success:
+                return {
+                    "report_type": "summary",
+                    "summary_content": response.content,
+                    "key_points": self._extract_key_points(response.content),
+                    "generated_at": datetime.now().isoformat()
+                }
+            else:
+                raise Exception(f"摘要报告生成失败: {response.error}")
+                
+        except Exception as e:
+            logger.error(f"摘要报告生成失败: {e}")
+            return {
+                "report_type": "summary",
+                "summary_content": f"研究目标：{query}。基于多Agent分析，该研究具有一定可行性，建议进一步深入调研和优化实施方案。",
+                "key_points": ["研究方向可行", "需要深入调研", "优化实施方案"],
                 "generated_at": datetime.now().isoformat()
-            },
-            timestamp=datetime.now()
+            }
+
+    async def _generate_technical_report(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成技术报告"""
+        query = task_data.get("query", "")
+        session_id = task_data.get("session_id", "")
+        
+        agent_results = await self._collect_all_agent_results(session_id)
+        
+        # 重点关注技术细节
+        technical_content = {
+            "technical_analysis": agent_results.get('verification_agent', {}).get('verification_report', ''),
+            "innovation_assessment": agent_results.get('critique_agent', {}).get('critique_report', ''),
+            "technical_challenges": self._extract_technical_challenges(agent_results),
+            "implementation_roadmap": self._generate_implementation_roadmap(agent_results)
+        }
+        
+        return {
+            "report_type": "technical",
+            "technical_content": technical_content,
+            "technical_score": self._calculate_technical_score(agent_results),
+            "generated_at": datetime.now().isoformat()
+        }
+
+    async def _generate_executive_summary(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """生成执行摘要"""
+        query = task_data.get("query", "")
+        session_id = task_data.get("session_id", "")
+        
+        agent_results = await self._collect_all_agent_results(session_id)
+        
+        # 提取关键决策信息
+        executive_summary = {
+            "research_objective": query,
+            "feasibility_score": agent_results.get('verification_agent', {}).get('feasibility_score', 6.0),
+            "innovation_score": agent_results.get('critique_agent', {}).get('innovation_score', 6.0),
+            "key_recommendations": self._extract_key_recommendations(agent_results),
+            "decision_points": self._identify_decision_points(agent_results),
+            "resource_requirements": self._estimate_resource_requirements(agent_results),
+            "timeline_estimate": "6-12个月",  # 简化估算
+            "risk_level": self._assess_overall_risk(agent_results)
+        }
+        
+        return {
+            "report_type": "executive_summary",
+            "executive_summary": executive_summary,
+            "generated_at": datetime.now().isoformat()
+        }
+
+    async def _collect_all_agent_results(self, session_id: str) -> Dict[str, Any]:
+        """收集所有Agent的结果"""
+        agent_results = {}
+        
+        try:
+            session_data = await self.blackboard.get_data(f"session_{session_id}")
+            if session_data and "tasks" in session_data:
+                for task_id, task in session_data["tasks"].items():
+                    agent_type = task.get("assigned_agent")
+                    if agent_type and task.get("status") == "completed":
+                        agent_results[agent_type] = task.get("output_data", {})
+            
+            logger.info(f"收集到{len(agent_results)}个Agent的结果")
+            return agent_results
+            
+        except Exception as e:
+            logger.warning(f"收集Agent结果失败: {e}")
+            return {}
+
+    def _format_agent_result(self, result: Dict[str, Any]) -> str:
+        """格式化Agent结果"""
+        if not result:
+            return "暂无结果"
+        
+        # 提取关键信息
+        formatted_parts = []
+        
+        if "verification_report" in result:
+            formatted_parts.append(f"验证报告: {result['verification_report'][:200]}...")
+        elif "critique_report" in result:
+            formatted_parts.append(f"批判分析: {result['critique_report'][:200]}...")
+        elif "summary" in result:
+            formatted_parts.append(f"信息摘要: {result['summary'][:200]}...")
+        
+        if "feasibility_score" in result:
+            formatted_parts.append(f"可行性评分: {result['feasibility_score']}/10")
+        
+        if "innovation_score" in result:
+            formatted_parts.append(f"创新性评分: {result['innovation_score']}/10")
+        
+        return "\n".join(formatted_parts) if formatted_parts else "结果格式化失败"
+
+    def _generate_report_metadata(self, agent_results: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+        """生成报告元数据"""
+        return {
+            "session_id": session_id,
+            "participating_agents": list(agent_results.keys()),
+            "total_agents": len(agent_results),
+            "generation_timestamp": datetime.now().isoformat(),
+            "data_sources": self._identify_data_sources(agent_results),
+            "analysis_depth": "comprehensive" if len(agent_results) >= 3 else "basic"
+        }
+
+    def _summarize_agent_contributions(self, agent_results: Dict[str, Any]) -> Dict[str, Any]:
+        """总结各Agent的贡献"""
+        contributions = {}
+        
+        for agent_type, result in agent_results.items():
+            if agent_type == "information_agent":
+                contributions[agent_type] = {
+                    "contribution_type": "信息收集与分析",
+                    "key_outputs": ["文献调研", "背景分析", "技术现状"],
+                    "data_quality": "高" if result else "低"
+                }
+            elif agent_type == "verification_agent":
+                contributions[agent_type] = {
+                    "contribution_type": "可行性验证",
+                    "key_outputs": ["技术可行性", "资源评估", "风险分析"],
+                    "feasibility_score": result.get("feasibility_score", "未评估")
+                }
+            elif agent_type == "critique_agent":
+                contributions[agent_type] = {
+                    "contribution_type": "批判性分析",
+                    "key_outputs": ["创新性评估", "问题识别", "改进建议"],
+                    "innovation_score": result.get("innovation_score", "未评估")
+                }
+        
+        return contributions
+
+    def _calculate_quality_indicators(self, agent_results: Dict[str, Any]) -> Dict[str, Any]:
+        """计算质量指标"""
+        indicators = {
+            "data_completeness": len(agent_results) / 3.0,  # 假设3个主要Agent
+            "analysis_depth": 0.8 if len(agent_results) >= 2 else 0.5,
+            "consistency_score": 0.85,  # 简化计算
+            "overall_quality": 0.0
+        }
+        
+        # 计算总体质量
+        indicators["overall_quality"] = (
+            indicators["data_completeness"] * 0.4 +
+            indicators["analysis_depth"] * 0.4 +
+            indicators["consistency_score"] * 0.2
         )
         
-        await self.blackboard.publish_event(event)
-        self.logger.info(f"报告生成完成: {report_id}")
+        return indicators
+
+    def _extract_key_points(self, content: str) -> List[str]:
+        """提取关键点"""
+        key_points = []
+        
+        lines = content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('•') or line.startswith('-') or line.startswith('*'):
+                key_points.append(line[1:].strip())
+            elif line.startswith(tuple('123456789')):
+                key_points.append(line[2:].strip())
+        
+        return key_points[:5]  # 最多返回5个关键点
+
+    def _extract_technical_challenges(self, agent_results: Dict[str, Any]) -> List[str]:
+        """提取技术挑战"""
+        challenges = []
+        
+        # 从验证Agent结果中提取
+        verification_result = agent_results.get('verification_agent', {})
+        if 'risk_assessment' in verification_result:
+            challenges.extend(verification_result['risk_assessment'][:3])
+        
+        # 从批判Agent结果中提取
+        critique_result = agent_results.get('critique_agent', {})
+        if 'identified_issues' in critique_result:
+            challenges.extend(critique_result['identified_issues'][:3])
+        
+        return challenges[:5]  # 最多返回5个挑战
+
+    def _generate_implementation_roadmap(self, agent_results: Dict[str, Any]) -> Dict[str, Any]:
+        """生成实施路线图"""
+        return {
+            "phase1": "需求分析与技术调研 (1-2个月)",
+            "phase2": "方案设计与验证 (2-3个月)",
+            "phase3": "原型开发与测试 (3-4个月)",
+            "phase4": "优化完善与部署 (2-3个月)",
+            "total_duration": "8-12个月",
+            "key_milestones": [
+                "技术方案确定",
+                "原型验证完成",
+                "系统集成测试",
+                "正式部署上线"
+            ]
+        }
+
+    def _calculate_technical_score(self, agent_results: Dict[str, Any]) -> float:
+        """计算技术评分"""
+        scores = []
+        
+        verification_result = agent_results.get('verification_agent', {})
+        if 'feasibility_score' in verification_result:
+            scores.append(verification_result['feasibility_score'])
+        
+        critique_result = agent_results.get('critique_agent', {})
+        if 'innovation_score' in critique_result:
+            scores.append(critique_result['innovation_score'])
+        
+        return sum(scores) / len(scores) if scores else 6.0
+
+    def _extract_key_recommendations(self, agent_results: Dict[str, Any]) -> List[str]:
+        """提取关键建议"""
+        recommendations = []
+        
+        for agent_type, result in agent_results.items():
+            if 'recommendations' in result:
+                recommendations.extend(result['recommendations'][:2])
+            elif 'improvement_suggestions' in result:
+                recommendations.extend(result['improvement_suggestions'][:2])
+        
+        return recommendations[:5]
+
+    def _identify_decision_points(self, agent_results: Dict[str, Any]) -> List[str]:
+        """识别决策点"""
+        return [
+            "是否继续推进该研究方向",
+            "技术路线选择",
+            "资源投入规模",
+            "实施时间安排",
+            "风险控制策略"
+        ]
+
+    def _estimate_resource_requirements(self, agent_results: Dict[str, Any]) -> Dict[str, str]:
+        """估算资源需求"""
+        return {
+            "人力资源": "3-5人团队",
+            "时间投入": "6-12个月",
+            "资金需求": "中等规模投入",
+            "设备要求": "基础研发设备",
+            "外部支持": "可能需要专家咨询"
+        }
+
+    def _assess_overall_risk(self, agent_results: Dict[str, Any]) -> str:
+        """评估总体风险"""
+        verification_result = agent_results.get('verification_agent', {})
+        feasibility_score = verification_result.get('feasibility_score', 6.0)
+        
+        if feasibility_score >= 8.0:
+            return "低风险"
+        elif feasibility_score >= 6.0:
+            return "中等风险"
+        else:
+            return "高风险"
+
+    def _identify_data_sources(self, agent_results: Dict[str, Any]) -> List[str]:
+        """识别数据来源"""
+        sources = []
+        
+        if 'information_agent' in agent_results:
+            sources.append("文献数据库")
+        if 'verification_agent' in agent_results:
+            sources.append("技术验证分析")
+        if 'critique_agent' in agent_results:
+            sources.append("专家批判分析")
+        
+        return sources
+
+    def _generate_default_report(self, query: str, agent_results: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+        """生成默认报告"""
+        default_content = f"""# 研究报告：{query}
+
+## 执行摘要
+本报告基于多Agent协作分析，对"{query}"进行了综合评估。
+
+## 主要发现
+- 该研究方向具有一定的技术可行性
+- 需要进一步的技术调研和验证
+- 建议制定详细的实施计划
+
+## 可行性评估
+基于现有分析，该研究项目具有中等可行性，建议谨慎推进。
+
+## 建议
+1. 加强技术调研
+2. 制定详细计划
+3. 评估资源需求
+4. 建立风险控制机制
+
+## 结论
+该研究方向值得进一步探索，但需要充分的准备和规划。"""
+
+        return {
+            "report_type": "comprehensive",
+            "report_content": default_content,
+            "report_metadata": self._generate_report_metadata(agent_results, session_id),
+            "agent_contributions": self._summarize_agent_contributions(agent_results),
+            "quality_indicators": {"overall_quality": 0.6},
+            "generated_at": datetime.now().isoformat(),
+            "word_count": len(default_content.split()),
+            "sections_count": default_content.count("##")
+        }
+
+    def _get_supported_task_types(self) -> List[str]:
+        """获取支持的任务类型"""
+        return [
+            "comprehensive_report",
+            "summary_report",
+            "technical_report",
+            "executive_summary",
+            "progress_report"
+        ]
+
+    def _get_features(self) -> List[str]:
+        """获取Agent特性"""
+        return [
+            "多源数据整合",
+            "结构化报告生成",
+            "质量指标评估",
+            "可视化展示",
+            "决策支持分析"
+        ]

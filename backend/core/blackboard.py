@@ -13,6 +13,15 @@ from dataclasses import dataclass, field
 from loguru import logger # type: ignore
 
 
+class TaskStatus(Enum):
+    """任务状态枚举"""
+    PENDING = "pending"      # 待执行
+    RUNNING = "running"      # 进行中
+    SUCCESS = "success"      # 成功完成
+    FAILED = "failed"        # 执行失败
+    CANCELLED = "cancelled"  # 已取消
+
+
 class EventType(Enum):
     """事件类型枚举"""
     # 基础事件
@@ -126,6 +135,26 @@ class ReasoningStep:
 
 
 @dataclass
+class TaskRequest:
+    """任务请求数据结构"""
+    task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str = ""
+    task_type: str = ""
+    description: str = ""
+    assigned_agent: str = ""
+    priority: int = 5  # 1-10, 越高越优先
+    status: TaskStatus = TaskStatus.PENDING
+    input_data: Dict[str, Any] = field(default_factory=dict)
+    output_data: Dict[str, Any] = field(default_factory=dict)
+    dependencies: List[str] = field(default_factory=list)  # 依赖的task_id列表
+    created_at: datetime = field(default_factory=datetime.now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    progress: float = 0.0  # 0.0-1.0 进度百分比
+
+
+@dataclass
 class BlackboardEvent:
     """黑板事件数据结构"""
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -161,6 +190,10 @@ class Blackboard:
         
         # 任务分解记录
         self.task_decompositions: Dict[str, Dict[str, Any]] = {}  # session_id -> decomposition data
+        
+        # 任务状态管理
+        self.task_requests: Dict[str, TaskRequest] = {}  # task_id -> TaskRequest
+        self.session_tasks: Dict[str, List[str]] = {}  # session_id -> task_id列表
         
         logger.info("🔲 黑板系统初始化完成")
     
@@ -582,6 +615,211 @@ class Blackboard:
         ))
         
         return chain_id
+
+    async def create_task_request(self, task_request: TaskRequest) -> str:
+        """创建任务请求"""
+        async with self._lock:
+            self.task_requests[task_request.task_id] = task_request
+            
+            # 添加到会话任务列表
+            if task_request.session_id not in self.session_tasks:
+                self.session_tasks[task_request.session_id] = []
+            self.session_tasks[task_request.session_id].append(task_request.task_id)
+            
+            logger.info(f"📝 创建任务请求: {task_request.task_id} ({task_request.task_type})")
+            
+            # 发布任务创建事件
+            await self.publish_event(BlackboardEvent(
+                event_type=EventType.TASK_CREATED,
+                agent_id="system",
+                target_agent=task_request.assigned_agent,
+                session_id=task_request.session_id,
+                data={
+                    "task_id": task_request.task_id,
+                    "task_type": task_request.task_type,
+                    "description": task_request.description,
+                    "assigned_agent": task_request.assigned_agent,
+                    "priority": task_request.priority
+                }
+            ))
+            
+            return task_request.task_id
+    
+    async def update_task_status(self, task_id: str, status: TaskStatus, 
+                                output_data: Optional[Dict[str, Any]] = None,
+                                error_message: Optional[str] = None,
+                                progress: Optional[float] = None) -> bool:
+        """更新任务状态"""
+        async with self._lock:
+            if task_id not in self.task_requests:
+                logger.warning(f"⚠️ 任务不存在: {task_id}")
+                return False
+            
+            task = self.task_requests[task_id]
+            old_status = task.status
+            task.status = status
+            
+            # 更新时间戳
+            if status == TaskStatus.RUNNING and task.started_at is None:
+                task.started_at = datetime.now()
+            elif status in [TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                task.completed_at = datetime.now()
+            
+            # 更新输出数据
+            if output_data:
+                task.output_data.update(output_data)
+            
+            # 更新错误信息
+            if error_message:
+                task.error_message = error_message
+            
+            # 更新进度
+            if progress is not None:
+                task.progress = max(0.0, min(1.0, progress))
+            
+            logger.info(f"🔄 任务状态更新: {task_id} {old_status.value} -> {status.value}")
+            
+            # 发布状态更新事件
+            event_type = {
+                TaskStatus.RUNNING: EventType.TASK_STARTED,
+                TaskStatus.SUCCESS: EventType.TASK_COMPLETED,
+                TaskStatus.FAILED: EventType.TASK_FAILED
+            }.get(status, EventType.DATA_UPDATED)
+            
+            await self.publish_event(BlackboardEvent(
+                event_type=event_type,
+                agent_id=task.assigned_agent,
+                session_id=task.session_id,
+                data={
+                    "task_id": task_id,
+                    "old_status": old_status.value,
+                    "new_status": status.value,
+                    "progress": task.progress,
+                    "output_data": output_data,
+                    "error_message": error_message
+                }
+            ))
+            
+            return True
+    
+    async def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取任务状态"""
+        if task_id not in self.task_requests:
+            return None
+        
+        task = self.task_requests[task_id]
+        
+        # 计算执行时间
+        execution_time = None
+        if task.started_at:
+            end_time = task.completed_at or datetime.now()
+            execution_time = (end_time - task.started_at).total_seconds()
+        
+        return {
+            "task_id": task.task_id,
+            "session_id": task.session_id,
+            "task_type": task.task_type,
+            "description": task.description,
+            "assigned_agent": task.assigned_agent,
+            "status": task.status.value,
+            "priority": task.priority,
+            "progress": task.progress,
+            "dependencies": task.dependencies,
+            "created_at": task.created_at.isoformat(),
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "execution_time_seconds": execution_time,
+            "error_message": task.error_message,
+            "input_data": task.input_data,
+            "output_data": task.output_data
+        }
+    
+    async def get_session_tasks(self, session_id: str) -> List[Dict[str, Any]]:
+        """获取会话的所有任务状态"""
+        if session_id not in self.session_tasks:
+            return []
+        
+        tasks = []
+        for task_id in self.session_tasks[session_id]:
+            task_status = await self.get_task_status(task_id)
+            if task_status:
+                tasks.append(task_status)
+        
+        return tasks
+    
+    async def get_tasks_by_status(self, status: TaskStatus, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """根据状态获取任务列表"""
+        tasks = []
+        
+        for task_id, task in self.task_requests.items():
+            if task.status == status:
+                if session_id is None or task.session_id == session_id:
+                    task_status = await self.get_task_status(task_id)
+                    if task_status:
+                        tasks.append(task_status)
+        
+        return tasks
+    
+    async def get_pending_tasks(self, agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """获取待执行的任务"""
+        tasks = []
+        
+        for task_id, task in self.task_requests.items():
+            if task.status == TaskStatus.PENDING:
+                if agent_id is None or task.assigned_agent == agent_id:
+                    # 检查依赖是否满足
+                    dependencies_met = True
+                    for dep_task_id in task.dependencies:
+                        if dep_task_id in self.task_requests:
+                            dep_task = self.task_requests[dep_task_id]
+                            if dep_task.status != TaskStatus.SUCCESS:
+                                dependencies_met = False
+                                break
+                    
+                    if dependencies_met:
+                        task_status = await self.get_task_status(task_id)
+                        if task_status:
+                            tasks.append(task_status)
+        
+        # 按优先级排序
+        tasks.sort(key=lambda x: x["priority"], reverse=True)
+        return tasks
+    
+    async def get_task_statistics(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """获取任务统计信息"""
+        stats = {
+            "total": 0,
+            "pending": 0,
+            "running": 0,
+            "success": 0,
+            "failed": 0,
+            "cancelled": 0,
+            "completion_rate": 0.0,
+            "average_execution_time": 0.0
+        }
+        
+        execution_times = []
+        
+        for task_id, task in self.task_requests.items():
+            if session_id is None or task.session_id == session_id:
+                stats["total"] += 1
+                stats[task.status.value] += 1
+                
+                # 计算执行时间
+                if task.started_at and task.completed_at:
+                    execution_time = (task.completed_at - task.started_at).total_seconds()
+                    execution_times.append(execution_time)
+        
+        # 计算完成率
+        if stats["total"] > 0:
+            completed = stats["success"] + stats["failed"] + stats["cancelled"]
+            stats["completion_rate"] = completed / stats["total"]
+        
+        # 计算平均执行时间
+        if execution_times:
+            stats["average_execution_time"] = sum(execution_times) / len(execution_times)
+        
+        return stats
 
 
 # 全局黑板实例
