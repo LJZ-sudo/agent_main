@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
 
 
 @dataclass
@@ -50,7 +50,7 @@ class ExperimentPlan:
     risk_analysis: Dict[str, Any]
 
 
-class ExperimentDesignAgent(LLMBaseAgent):
+class ExperimentDesignAgent(BaseAgent):
     """
     实验设计Agent - 科学实验设计专家
     

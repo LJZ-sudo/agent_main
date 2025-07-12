@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from urllib.parse import quote, urlencode
-from loguru import logger
+from loguru import logger # type: ignore
 import re
 from datetime import datetime, timedelta
 

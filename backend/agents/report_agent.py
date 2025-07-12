@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType
 
 
 @dataclass
@@ -37,7 +37,7 @@ class ReportTemplate:
     formatting_rules: Dict[str, Any]
 
 
-class ReportAgent(LLMBaseAgent):
+class ReportAgent(BaseAgent):
     """
     报告生成Agent - 结构化科研报告生成专家
 

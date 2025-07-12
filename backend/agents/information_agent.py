@@ -12,8 +12,9 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import numpy as np
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
+from backend.utils.literature_search import LiteratureSearchEngine, LiteratureSearchResult
 
 
 @dataclass
@@ -58,7 +59,7 @@ class KnowledgeGraph:
     connection_strength: Dict[str, float]
 
 
-class InformationAgent(LLMBaseAgent):
+class InformationAgent(BaseAgent):
     """
     增强版信息获取Agent - 智能文献调研专家
     
@@ -70,19 +71,7 @@ class InformationAgent(LLMBaseAgent):
     """
 
     def __init__(self, blackboard: Blackboard, llm_client=None):
-        config = AgentConfig(
-            name="InformationAgent",
-            agent_type="information_gatherer",
-            description="增强版信息获取Agent - 智能文献调研专家",
-            subscribed_events=[
-                EventType.TASK_CREATED,
-                EventType.TASK_ASSIGNED,
-                EventType.LITERATURE_SEARCH_REQUEST,
-                EventType.DESIGN_REQUEST
-            ],
-            max_concurrent_tasks=3
-        )
-        super().__init__(config, blackboard, llm_client)
+        super().__init__("information_agent", blackboard)
         
         # 调研方法配置
         self.research_methods = {
@@ -112,6 +101,52 @@ class InformationAgent(LLMBaseAgent):
         self.literature_cache: Dict[str, LiteratureDocument] = {}
         self.topic_cache: Dict[str, ResearchTopic] = {}
         self.knowledge_graphs: Dict[str, KnowledgeGraph] = {}
+        self.search_engine = LiteratureSearchEngine()
+        self.search_databases = ["PubMed", "arXiv", "CrossRef", "GoogleScholar"]
+        
+        # 设置Agent类型
+        self.agent_type = "information_gatherer"
+        self.specializations = ["literature_search", "knowledge_graph", "research_analysis"]
+
+    async def _process_task_impl(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        """实现BaseAgent要求的任务处理方法"""
+        try:
+            # 根据任务类型选择处理方法
+            task_type = task_data.get("task_type", "literature_search")
+            
+            if task_type == "literature_search":
+                # 执行文献搜索
+                keywords = task_data.get("keywords", [])
+                if isinstance(keywords, str):
+                    keywords = [keywords]
+                
+                documents = await self._parallel_database_search(keywords)
+                
+                return {
+                    "task_type": task_type,
+                    "documents": documents,
+                    "document_count": len(documents),
+                    "keywords_used": keywords
+                }
+            elif task_type == "research_analysis":
+                # 执行研究分析
+                method = task_data.get("method", "hybrid")
+                result = await self._execute_literature_research(task_data, method)
+                return result
+            else:
+                # 默认处理
+                return {
+                    "task_type": task_type,
+                    "status": "completed",
+                    "message": f"处理了{task_type}类型的任务"
+                }
+                
+        except Exception as e:
+            return {
+                "task_type": task_data.get("task_type", "unknown"),
+                "status": "failed",
+                "error": str(e)
+            }
 
     async def _load_prompt_templates(self):
         """加载Prompt模板"""
@@ -777,55 +812,69 @@ class InformationAgent(LLMBaseAgent):
         return json.loads(response)
 
     async def _parallel_database_search(self, keywords: List[str]) -> List[LiteratureDocument]:
-        """并行多数据库检索"""
+        """并行多数据库检索（真实API）"""
         search_tasks = []
-        
         for database in self.search_databases:
             for keyword in keywords:
                 task = asyncio.create_task(self._search_single_database(database, keyword))
                 search_tasks.append(task)
-        
         search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
-        
         # 合并和去重
         all_documents = []
         seen_titles = set()
-        
         for result in search_results:
             if isinstance(result, list):
                 for doc in result:
                     if doc.title not in seen_titles:
                         all_documents.append(doc)
                         seen_titles.add(doc.title)
-        
         return all_documents
 
     async def _search_single_database(self, database: str, keyword: str) -> List[LiteratureDocument]:
-        """单个数据库检索"""
-        # 模拟数据库检索（实际实现时需要调用具体的API）
-        self.logger.info(f"在{database}中检索关键词: {keyword}")
-        
-        # 这里返回模拟数据，实际实现时需要调用真实的学术数据库API
-        mock_documents = [
-            LiteratureDocument(
+        """单个数据库检索（真实API）"""
+        limit = 20
+        try:
+            if database == "PubMed":
+                results = self.search_engine.search_pubmed(keyword, limit)
+            elif database == "arXiv":
+                results = self.search_engine.search_arxiv(keyword, limit)
+            elif database == "CrossRef":
+                results = self.search_engine.search_crossref(keyword, limit)
+            elif database == "GoogleScholar":
+                try:
+                    results = self.search_engine.search_serpapi_google_scholar(keyword, limit)
+                except Exception as e:
+                    self.logger.warning(f"GoogleScholar API异常: {e}")
+                    results = []
+            else:
+                self.logger.warning(f"未知数据库: {database}")
+                results = []
+        except Exception as e:
+            self.logger.warning(f"{database} 检索异常: {e}")
+            results = []
+
+        # 转换为 LiteratureDocument
+        docs = []
+        for i, item in enumerate(results):
+            doc = LiteratureDocument(
                 doc_id=f"doc_{database}_{keyword}_{i}",
-                title=f"Research on {keyword} in {database} - Paper {i}",
-                authors=[f"Author{i}A", f"Author{i}B"],
-                journal=f"Journal of {database}",
-                year=2020 + (i % 4),
-                abstract=f"This paper investigates {keyword} using advanced methods...",
-                keywords=[keyword, f"related_{keyword}"],
-                citation_count=10 + i * 5,
-                journal_impact_factor=2.5 + i * 0.2,
-                relevance_score=0.0,  # 将由质量评估填充
-                quality_score=0.0,   # 将由质量评估填充
-                source_database=database,
-                doi=f"10.1000/{database}.{keyword}.{i}"
+                title=item.title,
+                authors=item.authors,
+                journal=item.journal,
+                year=int(item.publication_date[:4]) if item.publication_date and item.publication_date[:4].isdigit() else 0,
+                abstract=item.abstract,
+                keywords=[keyword],
+                citation_count=item.citation_count,
+                journal_impact_factor=0.0,
+                relevance_score=0.0,
+                quality_score=0.0,
+                source_database=item.source_database,
+                doi=item.doi or "",
+                full_text=""
             )
-            for i in range(3)  # 每个关键词在每个数据库返回3篇文档
-        ]
-        
-        return mock_documents
+            docs.append(doc)
+        self.logger.info(f"{database} 返回 {len(docs)} 条，高质量待评估")
+        return docs
 
     async def _quality_assessment_and_filtering(self, documents: List[LiteratureDocument]) -> List[LiteratureDocument]:
         """文献质量评估和筛选"""

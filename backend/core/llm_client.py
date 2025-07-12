@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 import aiohttp
 import openai
-from loguru import logger
+from loguru import logger # type: ignore
 
 
 class LLMProvider(Enum):

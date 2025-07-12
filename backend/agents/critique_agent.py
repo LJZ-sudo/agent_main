@@ -8,8 +8,8 @@ from datetime import datetime
 import json
 import uuid
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
 
 
 @dataclass
@@ -25,7 +25,7 @@ class CritiqueResult:
     evidence: List[str]
 
 
-class CritiqueAgent(LLMBaseAgent):
+class CritiqueAgent(BaseAgent):
     """
     批判Agent - 严谨的科研审稿人
     

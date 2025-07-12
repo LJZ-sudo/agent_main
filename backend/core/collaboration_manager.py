@@ -12,7 +12,7 @@ from enum import Enum
 from collections import defaultdict
 import networkx as nx
 
-from core.blackboard import Blackboard, BlackboardEvent, EventType
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType
 from loguru import logger
 
 

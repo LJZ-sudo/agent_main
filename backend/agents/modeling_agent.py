@@ -9,8 +9,8 @@ from datetime import datetime
 import json
 import numpy as np
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType
 
 
 @dataclass
@@ -25,7 +25,7 @@ class ModelResult:
     execution_time: float
 
 
-class ModelingAgent(LLMBaseAgent):
+class ModelingAgent(BaseAgent):
     """
     建模Agent - 计算模拟和理论分析专家
 

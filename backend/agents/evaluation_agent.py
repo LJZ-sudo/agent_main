@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType, ReasoningStep
 
 
 @dataclass
@@ -24,7 +24,7 @@ class EvaluationMetric:
     category: str  # quality, efficiency, innovation, feasibility
 
 
-class EvaluationAgent(LLMBaseAgent):
+class EvaluationAgent(BaseAgent):
     """
     评估Agent - 对其他Agent的工作进行评估和质量控制
     

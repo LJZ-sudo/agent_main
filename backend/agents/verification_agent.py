@@ -9,8 +9,8 @@ import json
 import re
 import uuid
 
-from core.base_agent import LLMBaseAgent, AgentConfig
-from core.blackboard import Blackboard, BlackboardEvent, EventType
+from backend.core.base_agent import BaseAgent
+from backend.core.blackboard import Blackboard, BlackboardEvent, EventType
 
 
 @dataclass
@@ -26,7 +26,7 @@ class VerificationResult:
     evidence: List[str]
 
 
-class VerificationAgent(LLMBaseAgent):
+class VerificationAgent(BaseAgent):
     """
     验证Agent - 核实方案的可行性和一致性
     

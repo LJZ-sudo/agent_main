@@ -12,7 +12,7 @@ from loguru import logger
 
 from .blackboard import Blackboard, BlackboardEvent, EventType, get_blackboard
 from .base_agent import BaseAgent, InformationAgent, VerificationAgent, CritiqueAgent, ReportAgent
-from ..agents.main_agent import MainAgent
+from backend.agents.main_agent import MainAgent
 
 
 class AgentManager:

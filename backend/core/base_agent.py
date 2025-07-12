@@ -11,8 +11,8 @@ from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
 from loguru import logger
 
-from .llm_client import LLMClient, create_llm_client, LLMProvider
-from ..config_clean import get_config
+from backend.core.llm_client import LLMClient, create_llm_client, LLMProvider
+from backend.config_clean import get_config
 
 
 class BaseAgent(ABC):

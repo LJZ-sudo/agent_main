@@ -168,14 +168,14 @@ class SystemScheduler:
 
     async def _create_agents(self):
         """创建所有Agent实例"""
-        from agents.main_agent import MainAgent
-        from agents.critique_agent import CritiqueAgent
-        from agents.verification_agent import VerificationAgent
-        from agents.report_agent import ReportAgent
-        from agents.experiment_design_agent import ExperimentDesignAgent
-        from agents.evaluation_agent import EvaluationAgent
-        from agents.information_agent import InformationAgent
-        from agents.modeling_agent import ModelingAgent
+        from backend.agents.main_agent import MainAgent
+        from backend.agents.critique_agent import CritiqueAgent
+        from backend.agents.verification_agent import VerificationAgent
+        from backend.agents.report_agent import ReportAgent
+        from backend.agents.experiment_design_agent import ExperimentDesignAgent
+        from backend.agents.evaluation_agent import EvaluationAgent
+        from backend.agents.information_agent import InformationAgent
+        from backend.agents.modeling_agent import ModelingAgent
         
         # 创建Agent实例
         agents_to_create = [
